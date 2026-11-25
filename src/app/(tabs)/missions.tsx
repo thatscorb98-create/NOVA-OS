@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FadeInView } from '@/components/ui/FadeInView';
 import { IconButton } from '@/components/ui/IconButton';
 import { MissionCard } from '@/components/nova/MissionCard';
+import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
 import { colors, spacing } from '@/theme';
 import type { Mission, MissionStatus } from '@/types/nova';
@@ -26,6 +27,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 export default function MissionsScreen() {
   const router = useRouter();
   const { missions, projects, advanceMission, deleteMission } = useNova();
+  const runtime = useAgentRuntime();
   const [filter, setFilter] = useState<Filter>('all');
 
   const visible = useMemo(
@@ -47,6 +49,16 @@ export default function MissionsScreen() {
       { text: 'Delete', style: 'destructive', onPress: () => deleteMission(mission) },
     ]);
   };
+
+  const handleRun = async (mission: Mission) => {
+    const result = await runtime.runMission(mission.id);
+
+    if (!result.ok) {
+      Alert.alert('Mission could not run', result.error ?? 'Unknown error');
+    }
+  };
+
+  const anyRunning = missions.some((mission) => runtime.isBusy(`mission:${mission.id}`));
 
   return (
     <Screen
@@ -100,6 +112,11 @@ export default function MissionsScreen() {
               <MissionCard
                 mission={mission}
                 projectName={projects.find((project) => project.id === mission.projectId)?.name}
+                onOpen={() => router.push(`/mission/${mission.id}`)}
+                onRun={() => {
+                  void handleRun(mission);
+                }}
+                isRunning={runtime.isBusy(`mission:${mission.id}`)}
                 onAdvance={() => handleAdvance(mission)}
                 onDelete={() => handleDelete(mission)}
               />
@@ -110,8 +127,17 @@ export default function MissionsScreen() {
 
       {missions.length > 0 ? (
         <AppText variant="micro" style={{ marginTop: spacing.xl, lineHeight: 16 }}>
-          TAP A MISSION CIRCLE TO MOVE IT QUEUED → ACTIVE → COMPLETE.
+          TAP A MISSION TO OPEN IT · TAP ▶ TO RUN IT WITH THE ASSIGNED AGENT · THE CIRCLE MOVES THE
+          STATUS MANUALLY.
         </AppText>
+      ) : null}
+
+      {!runtime.hasKey && missions.length > 0 ? (
+        <View style={{ marginTop: spacing.lg }}>
+          <AppText variant="micro" style={{ color: colors.amber, lineHeight: 16 }}>
+            {anyRunning ? 'A RUN IS IN PROGRESS…' : 'CORE OFFLINE · ADD A KEY IN SYSTEM → CORE TO RUN WORK'}
+          </AppText>
+        </View>
       ) : null}
     </Screen>
   );

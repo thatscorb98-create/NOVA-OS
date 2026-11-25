@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -9,31 +10,38 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 
 import { AppText } from '@/components/ui/AppText';
 import { StatusPill } from '@/components/ui/Bits';
 import { Composer } from '@/components/nova/Composer';
 import { MessageBubble } from '@/components/nova/MessageBubble';
 import { NovaOrb } from '@/components/nova/NovaOrb';
-import { CORE_STATUS_COLOR, NOVA_CORE } from '@/lib/nova-core';
+import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
 import { colors, radius, spacing } from '@/theme';
 
 const SUGGESTIONS = [
-  'Plan a product launch',
-  'Research my competitors',
-  'Draft a business plan',
+  'Research my top 3 competitors and brief me',
+  'Plan a launch for my product',
+  'Draft next week’s content calendar',
 ];
 
 export default function ChatScreen() {
-  const { messages, sendChatMessage } = useNova();
+  const router = useRouter();
+  const { messages } = useNova();
+  const runtime = useAgentRuntime();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
+  const working = runtime.isBusy('nova');
+  const online = runtime.hasKey;
+
   const handleSend = () => {
-    if (!draft.trim()) return;
-    sendChatMessage(draft);
+    if (!draft.trim() || working) return;
+    const text = draft.trim();
     setDraft('');
+    void runtime.sendNovaMessage(text);
   };
 
   return (
@@ -55,7 +63,10 @@ export default function ChatScreen() {
             borderBottomColor: colors.hairline,
           }}
         >
-          <View
+          <Pressable
+            onPress={() => router.push('/core')}
+            accessibilityRole="button"
+            accessibilityLabel="Core settings"
             style={{
               width: 40,
               height: 40,
@@ -84,7 +95,7 @@ export default function ChatScreen() {
                 }}
               />
             </LinearGradient>
-          </View>
+          </Pressable>
 
           <View style={{ flex: 1 }}>
             <AppText variant="heading">NOVA</AppText>
@@ -93,7 +104,10 @@ export default function ChatScreen() {
             </AppText>
           </View>
 
-          <StatusPill label={NOVA_CORE.status === 'connected' ? 'Online' : 'Offline'} color={CORE_STATUS_COLOR} />
+          <StatusPill
+            label={online ? 'Online' : 'Offline'}
+            color={online ? colors.success : colors.amber}
+          />
         </View>
 
         <KeyboardAvoidingView
@@ -121,13 +135,14 @@ export default function ChatScreen() {
                   gap: spacing.sm,
                 }}
               >
-                <NovaOrb size={104} offline={NOVA_CORE.status !== 'connected'} />
+                <NovaOrb size={104} offline={!online} />
 
                 <AppText variant="title" style={{ marginTop: spacing.md }}>
                   Command NOVA
                 </AppText>
                 <AppText variant="caption" align="center" style={{ maxWidth: 290 }}>
-                  One intelligence in front of seven specialists. Goals in, missions out.
+                  One intelligence in front of six specialists. Give NOVA a goal and it delegates
+                  the work to the right agent.
                 </AppText>
 
                 <View
@@ -163,9 +178,25 @@ export default function ChatScreen() {
             ) : (
               messages.map((message) => <MessageBubble key={message.id} message={message} />)
             )}
+
+            {working ? (
+              <View
+                style={{
+                  alignSelf: 'flex-start',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: spacing.sm,
+                  paddingVertical: spacing.sm,
+                }}
+              >
+                <ActivityIndicator size="small" color={colors.cyan} />
+                <AppText variant="micro">NOVA IS WORKING…</AppText>
+              </View>
+            ) : null}
           </ScrollView>
 
-          <View
+          <Pressable
+            onPress={() => router.push('/core')}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -174,13 +205,32 @@ export default function ChatScreen() {
               paddingBottom: spacing.sm,
             }}
           >
-            <Ionicons name="lock-closed-outline" size={11} color={colors.textDim} />
-            <AppText variant="micro" style={{ flex: 1, fontSize: 9, letterSpacing: 0.8 }}>
-              {NOVA_CORE.label} · LIVE REPLIES ENABLE WHEN THE CORE IS CONNECTED
+            <Ionicons
+              name={online ? 'flash-outline' : 'lock-closed-outline'}
+              size={11}
+              color={online ? colors.success : colors.amber}
+            />
+            <AppText
+              variant="micro"
+              style={{
+                flex: 1,
+                fontSize: 9,
+                letterSpacing: 0.8,
+                color: online ? colors.textDim : colors.amber,
+              }}
+            >
+              {online
+                ? `${runtime.model} · LIVE CALLS · TAP FOR CORE SETTINGS`
+                : 'CORE OFFLINE · TAP TO ADD YOUR NVIDIA API KEY'}
             </AppText>
-          </View>
+          </Pressable>
 
-          <Composer value={draft} onChangeText={setDraft} onSend={handleSend} />
+          <Composer
+            value={draft}
+            onChangeText={setDraft}
+            onSend={handleSend}
+            placeholder={online ? 'Command NOVA…' : 'Connect the core to chat…'}
+          />
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
