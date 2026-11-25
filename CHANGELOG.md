@@ -24,9 +24,9 @@ First installable Android release (`versionCode` 1).
 ### Android packaging
 
 - Standalone release APK configuration for `com.novaos.app`: app name NOVA OS, `versionCode` 1, adaptive icon, monochrome icon and splash screen on `#04050A`, portrait only.
-- Minimal permissions — `INTERNET` and `VIBRATE`; the template's storage and overlay permissions are explicitly blocked.
+- Minimal permissions — the app requests `INTERNET` and `VIBRATE`; library manifests contribute a signature-level `DUMP` and normal-level biometric declarations, and the template's storage and overlay permissions are explicitly blocked.
 - `expo-secure-store` with Android backup exclusion, so the model key is never included in cloud backups.
-- Free cloud builds: a GitHub Actions workflow that produces a signed release APK with no computer, and `eas.json` `preview` (APK) / `production` (AAB) profiles for Expo's free tier.
+- Free cloud builds: a GitHub Actions workflow that produces a signed release APK with no computer, and `eas.json` `preview` (APK) / `production` (AAB) profiles for Expo's free tier. The workflow builds arm64-v8a only and publishes the finished APK to a public download link.
 - `.npmrc` relaxes peer resolution so installs work with the pinned React 19.3.0.
 
 ### Notes
