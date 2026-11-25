@@ -16,7 +16,8 @@ export type AgentToolId =
   | 'create_mission'
   | 'list_workspace'
   | 'complete_mission'
-  | 'save_memory';
+  | 'save_memory'
+  | 'recall_memory';
 
 export interface Agent {
   /** Stable identifier used in storage and routing. */
@@ -90,17 +91,33 @@ export interface ActivityEvent {
   createdAt: number;
 }
 
-export type MemorySource = 'agent' | 'user' | 'mission';
+/** Where a memory belongs and who may recall it. */
+export type MemoryScope = 'global' | 'project' | 'agent' | 'conversation';
 
-export interface MemoryNote {
+export type MemoryKind = 'fact' | 'preference' | 'decision' | 'summary' | 'note';
+
+export type MemorySource = 'user' | 'agent' | 'nova' | 'mission' | 'conversation';
+
+/**
+ * One durable memory. Records are created by the owner, by agents through the
+ * save_memory tool, and automatically from completed missions and conversations.
+ * Every record is editable and deletable from the Memory screen.
+ */
+export interface MemoryRecord {
   id: string;
   text: string;
-  createdAt: number;
+  scope: MemoryScope;
+  kind: MemoryKind;
   source: MemorySource;
-}
-
-export interface AgentMemory {
-  notes: MemoryNote[];
+  /** Set for agent and conversation memories. */
+  agentId?: AgentId;
+  /** Set for project memories. */
+  projectId?: string;
+  /** Groups an exchange with the conversation it came from. */
+  conversationId?: string;
+  tags: string[];
+  pinned: boolean;
+  createdAt: number;
   updatedAt: number;
 }
 
