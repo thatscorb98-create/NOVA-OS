@@ -106,7 +106,8 @@ The call budget is persisted on the mission and incremented before every request
 - Streaming replies; calls are non-streaming for reliability on mobile networks.
 - Parallel task execution: planned tasks run one at a time to keep costs and rate limits predictable.
 - Automatic replanning when a whole plan fails; you retry or start a new mission instead.
-- Accounts, cloud sync and multi-device memory.
+- Multi-device memory sync. Phase 1 adds optional owner accounts and a cloud queue, but the local ledger is not mirrored automatically.
+- Live email, payments and production. Those are later phases and every one of them ships off by default.
 - Memory export/import.
 
 ## Run it
@@ -215,6 +216,19 @@ Every step above is a real request. Failures (invalid key, rate limit, retired m
 - Memories and conversations stay on the phone; the only outbound data is the prompt sent to NVIDIA for the current turn.
 - Model output is advice, not verified fact.
 - **System → Reset local workspace** wipes missions, projects, conversations and memories (the stored key is kept until you remove it in Core settings).
+
+## Cloud foundation (Phase 1)
+
+The app still works entirely on the phone with no account. Connecting a Supabase project adds the parts that cannot live on a phone: a persistent job queue that survives the app being closed, a worker and scheduler that run server-side, company memory, and the CRM tables later phases build on.
+
+- `supabase/migrations/` — schema, row level security, queue RPCs.
+- `supabase/functions/worker` — claims and runs jobs, with retries, checkpoints and recovery.
+- `supabase/functions/scheduler` — cron entry point that enqueues the recovery sweep and drains the queue.
+- `src/app/cloud.tsx` — the control surface: sign in, health, queue, worker controls, company mode.
+
+Setup steps, what is enforced, and known limits are in [`docs/phase-1-cloud-foundation.md`](docs/phase-1-cloud-foundation.md).
+
+Only the public anon key reaches the app. The service-role key is read by the edge functions from Supabase secrets and never appears in the bundle, the repository or a log.
 
 ## Brand assets
 
