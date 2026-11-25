@@ -14,7 +14,7 @@ import type { Project } from '@/types/nova';
 
 export default function ProjectsScreen() {
   const router = useRouter();
-  const { projects, missions, deleteProject } = useNova();
+  const { projects, missions, memories, deleteProject } = useNova();
 
   const handleDelete = (project: Project) => {
     Alert.alert(
@@ -57,6 +57,8 @@ export default function ProjectsScreen() {
                   project={project}
                   totalMissions={linked.length}
                   completedMissions={linked.filter((mission) => mission.status === 'complete').length}
+                  memoryCount={memories.filter((memory) => memory.projectId === project.id).length}
+                  onOpenMemory={() => router.push(`/memory?projectId=${project.id}`)}
                   onDelete={() => handleDelete(project)}
                 />
               </FadeInView>

@@ -30,7 +30,7 @@ const ACTIVITY_ICONS: Record<ActivityEvent['kind'], IconName> = {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { missions, projects, activity } = useNova();
+  const { missions, projects, activity, memories } = useNova();
   const runtime = useAgentRuntime();
 
   const openMissions = missions.filter((mission) => mission.status !== 'complete');
@@ -89,6 +89,22 @@ export default function HomeScreen() {
                   : 'CORE OFFLINE · TAP TO CONNECT YOUR MODEL KEY'}
               </AppText>
             )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push('/memory')}
+            hitSlop={6}
+            style={{
+              marginTop: spacing.md,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <Ionicons name="library-outline" size={11} color={colors.violetBright} />
+            <AppText variant="micro" style={{ color: colors.violetBright }}>
+              MEMORY · {memories.length} SAVED
+            </AppText>
           </Pressable>
 
           <View
