@@ -133,10 +133,10 @@ src/
   app/                    Expo Router routes
     (tabs)/               Home · Chat · Agents · Missions · Projects · System
     agent/[id].tsx        Agent console (overview · work · chat)
-    mission/[id].tsx      Mission console: plan, tasks, approvals, report, history
+    mission/[id].tsx      Mission detail and stored result
     memory.tsx            Memory ledger: search, add, edit, pin, delete
     core.tsx              Model key, model choice, connection test
-    mission-new.tsx       Goal creation: planned or single-agent
+    mission-new.tsx       Mission creation modal
     project-new.tsx       Project creation modal
   components/
     ui/                   AppText, Panel, Screen, NeonButton, Chip, FormField…
@@ -151,8 +151,8 @@ src/
   lib/memory.ts           Tokenizer, relevance scoring, prompt formatting, search
   lib/mission.ts          Plan parsing, task graph, progress and hard limits
   lib/storage.ts          AsyncStorage v4 state with v1/v2/v3 migration
-  store/nova-store.tsx    Workspace state, missions and the memory ledger
-  store/agent-runtime.tsx Model calls, tools, planning, execution, memory writes
+  store/nova-store.tsx    Workspace state and the memory ledger
+  store/agent-runtime.tsx Model calls, tools, delegation, memory writes
   types/nova.ts           Domain types
 ```
 
