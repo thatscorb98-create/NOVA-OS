@@ -16,10 +16,12 @@ import type {
   AutonomyMode,
   CloudCatalogService,
   CloudDiscoveryRun,
+  CloudEmailAccount,
   CloudEvent,
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudOutreachMessage,
   CloudResult,
 } from '@/lib/cloud/types';
 import { useNova } from '@/store/nova-store';
@@ -49,6 +51,7 @@ type BusyKey =
   | 'discovery'
   | 'catalog'
   | 'settings'
+  | 'outreach'
   | null;
 
 interface CloudContextValue {
@@ -62,6 +65,8 @@ interface CloudContextValue {
   leads: CloudLead[];
   catalog: CloudCatalogService[];
   discoveryRuns: CloudDiscoveryRun[];
+  outreach: CloudOutreachMessage[];
+  emailAccount: CloudEmailAccount | null;
   lastError: string | null;
   lastMessage: string | null;
   busy: BusyKey;
@@ -81,6 +86,14 @@ interface CloudContextValue {
     priceCents: number,
     deliveryDays: number,
   ) => Promise<CloudResult>;
+  updateSettings: (patch: {
+    industries?: string[];
+    geography?: string[];
+    daily_lead_cap?: number;
+    score_threshold?: number;
+  }) => Promise<CloudResult>;
+  approveMessage: (id: string) => Promise<CloudResult>;
+  draftForLead: (leadId: string) => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -98,6 +111,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [leads, setLeads] = useState<CloudLead[]>([]);
   const [catalog, setCatalog] = useState<CloudCatalogService[]>([]);
   const [discoveryRuns, setDiscoveryRuns] = useState<CloudDiscoveryRun[]>([]);
+  const [outreach, setOutreach] = useState<CloudOutreachMessage[]>([]);
+  const [emailAccount, setEmailAccount] = useState<CloudEmailAccount | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyKey>(null);
@@ -139,20 +154,32 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setLeads([]);
       setCatalog([]);
       setDiscoveryRuns([]);
+      setOutreach([]);
+      setEmailAccount(null);
       return;
     }
 
     setBusy('refresh');
     try {
-      const [nextHealth, nextJobs, nextEvents, nextLeads, nextCatalog, nextRuns] =
-        await Promise.all([
-          cloudApi.loadHealth(client),
-          cloudApi.loadJobs(client),
-          cloudApi.loadEvents(client),
-          cloudApi.loadLeads(client),
-          cloudApi.loadCatalog(client),
-          cloudApi.loadDiscoveryRuns(client),
-        ]);
+      const [
+        nextHealth,
+        nextJobs,
+        nextEvents,
+        nextLeads,
+        nextCatalog,
+        nextRuns,
+        nextOutreach,
+        nextAccount,
+      ] = await Promise.all([
+        cloudApi.loadHealth(client),
+        cloudApi.loadJobs(client),
+        cloudApi.loadEvents(client),
+        cloudApi.loadLeads(client),
+        cloudApi.loadCatalog(client),
+        cloudApi.loadDiscoveryRuns(client),
+        cloudApi.loadOutreachMessages(client),
+        cloudApi.loadEmailAccount(client),
+      ]);
 
       setHealth(nextHealth);
       setJobs(nextJobs);
@@ -160,6 +187,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setLeads(nextLeads);
       setCatalog(nextCatalog);
       setDiscoveryRuns(nextRuns);
+      setOutreach(nextOutreach);
+      setEmailAccount(nextAccount);
       setLastError(null);
     } catch (error) {
       setLastError(cloudApi.describeCloudError(error));
@@ -176,6 +205,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setLeads([]);
       setCatalog([]);
       setDiscoveryRuns([]);
+      setOutreach([]);
+      setEmailAccount(null);
       return;
     }
     void refresh();
@@ -225,6 +256,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     setLeads([]);
     setCatalog([]);
     setDiscoveryRuns([]);
+    setOutreach([]);
+    setEmailAccount(null);
     setLastError(null);
     setLastMessage(null);
   }, []);
@@ -445,6 +478,90 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const updateSettings = useCallback(
+    async (patch: {
+      industries?: string[];
+      geography?: string[];
+      daily_lead_cap?: number;
+      score_threshold?: number;
+    }): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('settings');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.updateCompanySettings(client, patch);
+        await refresh();
+        setLastMessage('Discovery settings saved.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const approveMessage = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('outreach');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.approveOutreachMessage(client, id);
+        await refresh();
+        setLastMessage('Draft approved. It will only send once email is switched on.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const draftForLead = useCallback(
+    async (leadId: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('outreach');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const jobId = await cloudApi.enqueueDraft(client, leadId);
+        const detail = jobId
+          ? 'Draft queued. Run the worker to write it.'
+          : 'A draft job for this lead is already queued.';
+
+        setLastMessage(detail);
+        await refresh();
+        return { ok: true, detail };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
   const status: CloudStatus = !isCloudConfigured
     ? 'unconfigured'
     : !session
@@ -467,6 +584,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       leads,
       catalog,
       discoveryRuns,
+      outreach,
+      emailAccount,
       lastError,
       lastMessage,
       busy,
@@ -482,6 +601,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       runDiscovery,
       setDiscoveryEnabled,
       setCatalogPrice,
+      updateSettings,
+      approveMessage,
+      draftForLead,
       clearNotice,
     }),
     [
@@ -494,6 +616,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       leads,
       catalog,
       discoveryRuns,
+      outreach,
+      emailAccount,
       lastError,
       lastMessage,
       busy,
@@ -509,6 +633,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       runDiscovery,
       setDiscoveryEnabled,
       setCatalogPrice,
+      updateSettings,
+      approveMessage,
+      draftForLead,
       clearNotice,
     ],
   );
