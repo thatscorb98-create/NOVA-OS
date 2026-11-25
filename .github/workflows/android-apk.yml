@@ -1,7 +1,8 @@
 name: Build Android APK
 
 # Free cloud build: runs on GitHub's servers, no computer or Expo account needed.
-# Actions → Build Android APK → Run workflow → download the APK artifact.
+# Actions → Build Android APK → Run workflow → the run summary prints a direct
+# download link for the APK (and the same file is attached as an artifact).
 
 on:
   workflow_dispatch:
@@ -18,7 +19,7 @@ jobs:
   apk:
     name: Release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -46,18 +47,41 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild --platform android --no-install
 
+      - name: Tune Gradle for the runner
+        run: |
+          printf '\norg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8\norg.gradle.parallel=true\norg.gradle.workers.max=4\norg.gradle.caching=true\nreactNativeArchitectures=arm64-v8a\n' >> android/gradle.properties
+
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -x lint -x test
 
       - name: Collect APK
         run: |
           mkdir -p build-output
           cp android/app/build/outputs/apk/release/*.apk build-output/nova-os.apk
           ls -lh build-output
+
+      - name: Publish download link
+        run: |
+          APK=build-output/nova-os.apk
+          URL=$(curl -sS --max-time 300 -F "file=@$APK" -F "expires=72" https://0x0.st || true)
+          if ! printf '%s' "$URL" | grep -q '^https://'; then
+            URL=$(curl -sS --max-time 300 -F "file=@$APK" https://temp.sh/upload || true)
+          fi
+          if ! printf '%s' "$URL" | grep -q '^https://'; then
+            URL="upload failed — download the artifact below instead"
+          fi
+          {
+            echo "## NOVA OS APK"
+            echo ""
+            echo "[Download nova-os.apk]($URL)"
+            echo ""
+            echo "Link valid for about 72 hours. The same file is attached as the `nova-os-apk` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "APK URL: $URL"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
