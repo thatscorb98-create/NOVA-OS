@@ -6,13 +6,28 @@ import { AppText } from '@/components/ui/AppText';
 import { Panel } from '@/components/ui/Panel';
 import { colors, radius, spacing } from '@/theme';
 import { getAgent } from '@/data/agents';
+import { getMissionProgress } from '@/lib/mission';
 import { formatRelative } from '@/lib/time';
-import type { Mission, MissionStatus } from '@/types/nova';
+import type { Mission, MissionStatus, MissionTaskStatus } from '@/types/nova';
 
 export const MISSION_STATUS_META: Record<MissionStatus, { label: string; color: string }> = {
   queued: { label: 'Queued', color: colors.cyan },
-  active: { label: 'Active', color: colors.violetBright },
+  planning: { label: 'Planning', color: colors.violetBright },
+  awaiting_approval: { label: 'Needs you', color: colors.amber },
+  active: { label: 'Running', color: colors.violetBright },
+  reviewing: { label: 'Reviewing', color: colors.blue },
   complete: { label: 'Complete', color: colors.success },
+  failed: { label: 'Failed', color: colors.danger },
+  cancelled: { label: 'Cancelled', color: colors.textDim },
+};
+
+export const TASK_STATUS_META: Record<MissionTaskStatus, { label: string; color: string }> = {
+  queued: { label: 'Queued', color: colors.cyan },
+  running: { label: 'Running', color: colors.violetBright },
+  review: { label: 'Review', color: colors.blue },
+  complete: { label: 'Done', color: colors.success },
+  failed: { label: 'Failed', color: colors.danger },
+  blocked: { label: 'Blocked', color: colors.amber },
 };
 
 interface MissionCardProps {
@@ -34,10 +49,19 @@ export function MissionCard({
   onDelete,
   isRunning,
 }: MissionCardProps) {
-  const agent = getAgent(mission.agentId);
-  const status = MISSION_STATUS_META[mission.status];
+  const planned = mission.kind === 'planned';
+  const agent = getAgent(planned ? 'nova' : mission.agentId);
+  const pending = mission.approval?.status === 'pending';
+  const meta = pending
+    ? { label: 'Needs you', color: colors.amber }
+    : MISSION_STATUS_META[mission.status];
   const isComplete = mission.status === 'complete';
+  const terminal =
+    mission.status === 'complete' ||
+    mission.status === 'failed' ||
+    mission.status === 'cancelled';
   const delivered = Boolean(mission.result);
+  const progress = getMissionProgress(mission);
 
   const body = (
     <View style={{ flexDirection: 'row', gap: spacing.md }}>
@@ -45,14 +69,14 @@ export function MissionCard({
         onPress={onAdvance}
         hitSlop={10}
         accessibilityRole="button"
-        accessibilityLabel={`Mission status: ${status.label}. Tap to advance.`}
+        accessibilityLabel={`Mission status: ${meta.label}. Tap to advance.`}
         style={{
           width: 24,
           height: 24,
           borderRadius: radius.pill,
           borderWidth: 1.5,
-          borderColor: status.color,
-          backgroundColor: isComplete ? status.color : 'transparent',
+          borderColor: meta.color,
+          backgroundColor: isComplete ? meta.color : 'transparent',
           alignItems: 'center',
           justifyContent: 'center',
           marginTop: 2,
@@ -60,8 +84,8 @@ export function MissionCard({
       >
         {isComplete ? (
           <Ionicons name="checkmark" size={13} color={colors.bg} />
-        ) : mission.status === 'active' ? (
-          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: status.color }} />
+        ) : mission.status === 'active' || mission.status === 'planning' ? (
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: meta.color }} />
         ) : null}
       </Pressable>
 
@@ -86,6 +110,32 @@ export function MissionCard({
           </AppText>
         ) : null}
 
+        {planned && progress.total > 0 ? (
+          <View style={{ marginTop: spacing.sm, gap: 5 }}>
+            <View
+              style={{
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: 'rgba(255,255,255,0.07)',
+                overflow: 'hidden',
+              }}
+            >
+              <View
+                style={{
+                  width: `${progress.percent}%`,
+                  height: '100%',
+                  borderRadius: 2,
+                  backgroundColor: progress.failed > 0 ? colors.amber : agent.accent,
+                }}
+              />
+            </View>
+            <AppText variant="micro">
+              {progress.complete}/{progress.total} TASKS · {progress.percent}%
+              {progress.failed > 0 ? ` · ${progress.failed} FAILED` : ''}
+            </AppText>
+          </View>
+        ) : null}
+
         <View
           style={{
             flexDirection: 'row',
@@ -98,7 +148,7 @@ export function MissionCard({
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Ionicons name={agent.icon} size={11} color={agent.accent} />
             <AppText variant="micro" style={{ color: agent.accent }}>
-              {agent.name}
+              {planned ? 'NOVA PLAN' : agent.name}
             </AppText>
           </View>
           {projectName ? (
@@ -106,7 +156,14 @@ export function MissionCard({
               {projectName.toUpperCase()}
             </AppText>
           ) : null}
-          <AppText variant="micro">{status.label.toUpperCase()}</AppText>
+          <AppText variant="micro" style={{ color: meta.color }}>
+            {meta.label.toUpperCase()}
+          </AppText>
+          {pending ? (
+            <AppText variant="micro" style={{ color: colors.amber }}>
+              APPROVAL NEEDED
+            </AppText>
+          ) : null}
           {delivered ? (
             <AppText variant="micro" style={{ color: colors.success }}>
               DELIVERED
@@ -117,7 +174,7 @@ export function MissionCard({
       </View>
 
       <View style={{ alignItems: 'center', gap: spacing.md }}>
-        {onRun && !delivered ? (
+        {onRun && !terminal && !pending ? (
           <Pressable
             onPress={onRun}
             disabled={isRunning}
@@ -151,7 +208,7 @@ export function MissionCard({
     <Panel
       padded={false}
       style={{ padding: spacing.lg }}
-      accent={delivered ? colors.success : undefined}
+      accent={pending ? colors.amber : delivered ? colors.success : undefined}
     >
       {onOpen ? (
         <Pressable
