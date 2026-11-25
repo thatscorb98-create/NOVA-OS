@@ -10,6 +10,7 @@ import React, {
 
 import { createId } from '@/lib/id';
 import { extractTags, normalizeMemoryText } from '@/lib/memory';
+import { defaultMissionBudget } from '@/lib/mission';
 import {
   clearPersistedState,
   emptyState,
@@ -30,7 +31,9 @@ import type {
   MemorySource,
   Message,
   Mission,
+  MissionKind,
   MissionResult,
+  MissionRunMode,
   MissionStatus,
   Project,
 } from '@/types/nova';
@@ -87,6 +90,7 @@ type Action =
   | { type: 'hydrate'; state: PersistedState }
   | { type: 'createMission'; mission: Mission; event: ActivityEvent }
   | { type: 'updateMission'; id: string; patch: Partial<Mission>; event?: ActivityEvent }
+  | { type: 'patchMission'; id: string; patch: Partial<Mission> }
   | { type: 'deleteMission'; id: string; event: ActivityEvent }
   | { type: 'createProject'; project: Project; event: ActivityEvent }
   | { type: 'deleteProject'; id: string; event: ActivityEvent }
@@ -154,6 +158,16 @@ function reducer(state: NovaState, action: Action): NovaState {
             : mission,
         ),
         activity: action.event ? withActivity(state, action.event) : state.activity,
+      };
+
+    case 'patchMission':
+      return {
+        ...state,
+        missions: state.missions.map((mission) =>
+          mission.id === action.id
+            ? { ...mission, ...action.patch, updatedAt: Date.now() }
+            : mission,
+        ),
       };
 
     case 'deleteMission':
@@ -276,6 +290,10 @@ export interface CreateMissionInput {
   objective?: string;
   agentId: AgentId;
   projectId?: string;
+  /** planned missions are planned and delegated by NOVA. */
+  kind?: MissionKind;
+  /** review pauses after planning so the owner can approve the plan. */
+  mode?: MissionRunMode;
 }
 
 export interface CreateProjectInput {
@@ -287,6 +305,7 @@ export interface CreateProjectInput {
 interface NovaContextValue extends NovaState {
   hydrated: boolean;
   createMission: (input: CreateMissionInput) => Mission;
+  patchMission: (missionId: string, patch: Partial<Mission>) => void;
   advanceMission: (mission: Mission) => void;
   setMissionStatus: (missionId: string, status: MissionStatus) => void;
   setMissionResult: (missionId: string, result: MissionResult) => void;
@@ -353,6 +372,18 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
         agentId: input.agentId,
         projectId: input.projectId,
         status: 'queued',
+        kind: input.kind ?? 'single',
+        mode: input.mode ?? 'auto',
+        tasks: [],
+        budget: defaultMissionBudget(),
+        history: [
+          {
+            id: createId('evt'),
+            label: 'Mission created',
+            detail: (input.kind ?? 'single') === 'planned' ? 'Planned by NOVA' : undefined,
+            createdAt: now,
+          },
+        ],
         createdAt: now,
         updatedAt: now,
       };
@@ -367,6 +398,10 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     },
     [activity],
   );
+
+  const patchMission = useCallback((missionId: string, patch: Partial<Mission>) => {
+    dispatch({ type: 'patchMission', id: missionId, patch });
+  }, []);
 
   const advanceMission = useCallback(
     (mission: Mission) => {
@@ -548,6 +583,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       ...state,
       hydrated,
       createMission,
+      patchMission,
       advanceMission,
       setMissionStatus,
       setMissionResult,
@@ -570,6 +606,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       state,
       hydrated,
       createMission,
+      patchMission,
       advanceMission,
       setMissionStatus,
       setMissionResult,

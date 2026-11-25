@@ -4,8 +4,8 @@ A native Android AI-agent operating system, built with **React Native + Expo + T
 
 NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (research & analysis), **FORGE** (engineering), **ECHO** (marketing & content), **STERLING** (business strategy), **RELAY** (operations) and **SENTINEL** (quality & safety).
 
-> **Current status: Phase Three — persistent memory.**
-> All seven agents make real NVIDIA NIM model calls, NOVA delegates work through tool calls, and the system now remembers across sessions. Memory is stored on the device, survives restarts, and is recalled into every relevant prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
+> **Current status: Phase Four — mission execution.**
+> Give NOVA a goal and it plans the work, delegates each task to a specialist, reviews what comes back, retries failures and writes a final report. Runs are gated by approvals and hard budgets, and memory from previous missions is recalled into every prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
 
 ---
 
@@ -21,7 +21,11 @@ NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (rese
   - Completed missions write agent memory (and project memory when the mission is linked to a project).
   - Every substantive chat exchange is recorded as a conversation memory.
 - **Memory screen**: search, filter by scope, add, edit, pin and delete anything that was saved.
-- **Mission detail** screen: stored model output, real tool/delegation steps, model, duration, re-run.
+- **Mission execution**: NOVA plans a goal into up to five tasks, assigns each to the right specialist, reviews every deliverable, retries failures and produces a final report.
+- **Mission dashboard**: goal entry, approval queue, live task queue, progress bars and execution history.
+- **Approval gates**: approve the plan before any specialist runs, or stop on a blocked task and choose retry, accept or cancel.
+- **Hard budgets**: five tasks, two attempts per task, 24 model calls and an eight-minute run window per mission, with a 60-step loop cap.
+- **Mission detail** screen: plan and task states, per-task output, review verdicts, real tool/delegation steps, model, duration, report and re-run.
 - **Core settings**: bring-your-own NVIDIA NIM key in the device keystore, model selector, live connection test.
 - **Local-first persistence** for missions, projects, conversations, memories, activity and settings; data survives restarts and older state is migrated forward.
 
@@ -73,10 +77,35 @@ Memory lives in **AsyncStorage on the phone**, the same durable store used for m
 
 Cloud or GitHub-backed storage was deliberately not used: every option would need an account, an API key or a token shipped inside the app, which contradicts the no-secrets rule and would expose private memory to a third party. Recall is local, free and works offline. The cost is that memory is per-device — moving phones means exporting it, which is not implemented yet.
 
+## How mission execution works
+
+A **planned mission** is NOVA coordinating specialists toward one goal.
+
+1. **Plan.** NOVA receives the goal, the linked project, the workspace and recalled memory, and must return strict JSON: up to five tasks, each with a title, a self-contained brief, one real specialist and dependencies on earlier tasks. The parser rejects unknown agents, NOVA itself, empty briefs and forward dependencies.
+2. **Approve.** With *Review plan first*, the mission stops at `awaiting_approval` and nothing runs until you approve. With *Auto-run* it continues immediately.
+3. **Delegate.** Each task whose dependencies are complete runs with that specialist's own instructions, temperature and recalled memory, plus the outputs of earlier tasks.
+4. **Review.** SENTINEL reviews the output against the brief and returns `pass` or `retry`. A retry adds the reviewer's notes to the brief and runs the task once more.
+5. **Escalate.** If a task still fails, or the run window expires, the mission stops in `awaiting_approval` with a decision: retry the task, accept the failure and continue, or cancel.
+6. **Report.** NOVA writes the final report from the real task outputs: outcome, delivered work, issues and next actions. The report, task outputs, reviews, call usage and the whole execution timeline are stored on the device.
+
+### Limits
+
+| Limit | Value | Where |
+| --- | --- | --- |
+| Tasks per mission | 5 | `MISSION_LIMITS.maxTasks`, plan parser |
+| Attempts per task | 2 | task `maxAttempts`, retry loop |
+| Model calls per mission | 24 | checked before every call |
+| Run window | 8 minutes | checked between tasks, resumable |
+| Loop iterations | 60 | hard `for` bound, no `while(true)` |
+
+The call budget is persisted on the mission and incremented before every request, including planning, review and the report. When it is reached the mission stops and reports why — it cannot keep spending. There is no automatic replanning: a failed plan returns to `queued` so you decide whether to run it again.
+
 ## What is not implemented yet
 
 - Web browsing, file access and code execution tools for agents (they reason from model knowledge and stored memory).
 - Streaming replies; calls are non-streaming for reliability on mobile networks.
+- Parallel task execution: planned tasks run one at a time to keep costs and rate limits predictable.
+- Automatic replanning when a whole plan fails; you retry or start a new mission instead.
 - Accounts, cloud sync and multi-device memory.
 - Memory export/import.
 
@@ -104,10 +133,10 @@ src/
   app/                    Expo Router routes
     (tabs)/               Home · Chat · Agents · Missions · Projects · System
     agent/[id].tsx        Agent console (overview · work · chat)
-    mission/[id].tsx      Mission detail and stored result
+    mission/[id].tsx      Mission console: plan, tasks, approvals, report, history
     memory.tsx            Memory ledger: search, add, edit, pin, delete
     core.tsx              Model key, model choice, connection test
-    mission-new.tsx       Mission creation modal
+    mission-new.tsx       Goal creation: planned or single-agent
     project-new.tsx       Project creation modal
   components/
     ui/                   AppText, Panel, Screen, NeonButton, Chip, FormField…
@@ -120,9 +149,10 @@ src/
     secure-key.ts         Keystore-backed API key storage
     tools.ts              Tool schemas (delegate, mission, memory, recall)
   lib/memory.ts           Tokenizer, relevance scoring, prompt formatting, search
-  lib/storage.ts          AsyncStorage v3 state with v1/v2 migration
-  store/nova-store.tsx    Workspace state and the memory ledger
-  store/agent-runtime.tsx Model calls, tools, delegation, memory writes
+  lib/mission.ts          Plan parsing, task graph, progress and hard limits
+  lib/storage.ts          AsyncStorage v4 state with v1/v2/v3 migration
+  store/nova-store.tsx    Workspace state, missions and the memory ledger
+  store/agent-runtime.tsx Model calls, tools, planning, execution, memory writes
   types/nova.ts           Domain types
 ```
 
