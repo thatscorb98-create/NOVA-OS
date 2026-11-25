@@ -38,7 +38,21 @@ export interface Agent {
   tools: AgentToolId[];
 }
 
-export type MissionStatus = 'queued' | 'active' | 'complete';
+export type MissionStatus =
+  | 'queued'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'active'
+  | 'reviewing'
+  | 'complete'
+  | 'failed'
+  | 'cancelled';
+
+/** A single objective handed to one agent, or a NOVA-coordinated plan. */
+export type MissionKind = 'single' | 'planned';
+
+/** auto = plan and execute, review = plan waits for owner approval. */
+export type MissionRunMode = 'auto' | 'review';
 
 export interface MissionResult {
   text: string;
@@ -46,8 +60,85 @@ export interface MissionResult {
   model: string;
   createdAt: number;
   durationMs: number;
-  /** Real steps taken during the run (tool calls, delegations). */
+  /** Real steps taken during the run (tool calls, delegations, tasks). */
   steps: string[];
+}
+
+export type MissionTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'review'
+  | 'complete'
+  | 'failed'
+  | 'blocked';
+
+export interface MissionTaskReview {
+  verdict: 'pass' | 'retry';
+  notes: string;
+  model: string;
+  createdAt: number;
+}
+
+/** One delegated unit of a planned mission. */
+export interface MissionTask {
+  id: string;
+  title: string;
+  brief: string;
+  agentId: AgentId;
+  status: MissionTaskStatus;
+  /** Ids of tasks that must complete before this one runs. */
+  dependsOn: string[];
+  /** Work attempts already spent. */
+  attempt: number;
+  maxAttempts: number;
+  output?: string;
+  review?: MissionTaskReview;
+  error?: string;
+  model?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+}
+
+/** Hard limits for one mission, persisted so they survive restarts. */
+export interface MissionBudget {
+  maxTasks: number;
+  maxCalls: number;
+  maxAttempts: number;
+  callsUsed: number;
+  startedAt: number;
+  /** End of the current run window; 0 means no window is active. */
+  deadlineAt: number;
+}
+
+export type MissionApprovalKind = 'plan' | 'escalation';
+
+/** A gate that stops the run until the owner decides. */
+export interface MissionApproval {
+  id: string;
+  kind: MissionApprovalKind;
+  status: 'pending' | 'approved' | 'rejected';
+  note: string;
+  taskId?: string;
+  createdAt: number;
+  resolvedAt?: number;
+}
+
+export interface MissionEvent {
+  id: string;
+  label: string;
+  detail?: string;
+  createdAt: number;
+}
+
+export interface MissionReport {
+  text: string;
+  model: string;
+  createdAt: number;
+  completed: number;
+  failed: number;
+  callsUsed: number;
+  durationMs: number;
 }
 
 export interface Mission {
@@ -61,6 +152,17 @@ export interface Mission {
   updatedAt: number;
   startedAt?: number;
   result?: MissionResult;
+  /** single = one agent run, planned = NOVA plans and delegates. */
+  kind: MissionKind;
+  mode: MissionRunMode;
+  tasks: MissionTask[];
+  budget: MissionBudget;
+  approval?: MissionApproval;
+  report?: MissionReport;
+  /** Ordered execution log for this mission. */
+  history: MissionEvent[];
+  planModel?: string;
+  planCreatedAt?: number;
 }
 
 export interface Project {
