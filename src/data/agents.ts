@@ -8,7 +8,7 @@ import { colors } from '@/theme';
  * work that exists in the workspace; nothing here fabricates activity.
  */
 
-const WORKSPACE_TOOLS = ['list_workspace', 'save_memory'] as const;
+const WORKSPACE_TOOLS = ['list_workspace', 'save_memory', 'recall_memory'] as const;
 
 export const AGENTS: Agent[] = [
   {
@@ -25,13 +25,13 @@ export const AGENTS: Agent[] = [
       'You are NOVA, the central intelligence of a private multi-agent operating system on the owner\'s Android phone.',
       'You coordinate six specialists: ATLAS (research and analysis), FORGE (engineering), ECHO (marketing and content), STERLING (business strategy and finance), RELAY (operations and task sequencing) and SENTINEL (quality, review and safety).',
       'You own the whole loop: understand the goal, decide whether it needs a specialist, delegate with a precise brief, then report what actually came back.',
-      'Use delegate_task when a specialist must do the work. Use create_mission when the owner should track work without running it now. Use list_workspace before assuming what exists. Use save_memory for durable facts about the owner\'s projects.',
+      'Use delegate_task when a specialist must do the work. Use create_mission when the owner should track work without running it now. Use list_workspace before assuming what exists. Use recall_memory when the owner refers to earlier conversations, preferences or project history. Use save_memory for durable facts about the owner\'s projects.',
       'Never pretend an agent ran, never invent a result, and never claim work is complete unless a tool returned it.',
     ].join(' '),
     personality:
       'Calm, precise mission-control operator. Direct sentences, no filler, no emoji. You explain trade-offs briefly and always state the next action.',
     temperature: 0.3,
-    tools: ['delegate_task', 'create_mission', 'list_workspace', 'save_memory'],
+    tools: ['delegate_task', 'create_mission', 'list_workspace', 'save_memory', 'recall_memory'],
   },
   {
     id: 'atlas',

@@ -61,7 +61,7 @@ const DEFINITIONS: Record<AgentToolId, ModelToolDefinition> = {
     function: {
       name: 'list_workspace',
       description:
-        'Read the current workspace: open missions, completed work with result summaries, and projects. Use before assuming what exists.',
+        'Read the current workspace: open missions, completed work, projects and your most relevant saved memories. Use before assuming what exists.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -85,13 +85,56 @@ const DEFINITIONS: Record<AgentToolId, ModelToolDefinition> = {
     function: {
       name: 'save_memory',
       description:
-        'Save a durable fact, decision or preference to your permanent memory. Keep it under 300 characters.',
+        'Save a durable fact, preference or decision so it can be recalled in future conversations. Keep it under 300 characters and self-contained.',
       parameters: {
         type: 'object',
         properties: {
           note: { type: 'string', description: 'The fact to remember.' },
+          scope: {
+            type: 'string',
+            enum: ['agent', 'global', 'project'],
+            description:
+              'agent = private to you, global = shared by every agent, project = tied to one project.',
+          },
+          project_id: {
+            type: 'string',
+            description: 'Required when scope is project. Use an id from list_workspace.',
+          },
+          kind: {
+            type: 'string',
+            enum: ['fact', 'preference', 'decision', 'note'],
+            description: 'What kind of memory this is.',
+          },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional keywords that make this easier to recall.',
+          },
         },
         required: ['note'],
+      },
+    },
+  },
+  recall_memory: {
+    type: 'function',
+    function: {
+      name: 'recall_memory',
+      description:
+        'Search your persistent memory and past conversations for anything relevant to a topic. Use when the owner refers to earlier work, preferences or projects.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'What to look for, e.g. "pricing decision" or "launch audience".',
+          },
+          scope: {
+            type: 'string',
+            enum: ['all', 'global', 'project', 'agent', 'conversation'],
+            description: 'Optional scope filter. Defaults to all memories you can access.',
+          },
+        },
+        required: ['query'],
       },
     },
   },
