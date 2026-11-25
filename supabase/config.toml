@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.scheduler]
 verify_jwt = false
+
+[functions.webhook]
+verify_jwt = false
