@@ -14,6 +14,7 @@ import { AGENTS } from '@/data/agents';
 import { countMemoriesByScope } from '@/lib/memory';
 import { NIM_MODELS } from '@/lib/model/models';
 import { useAgentRuntime } from '@/store/agent-runtime';
+import { useCloud } from '@/store/cloud-store';
 import { useNova } from '@/store/nova-store';
 import { colors, spacing } from '@/theme';
 
@@ -83,12 +84,33 @@ export default function SystemScreen() {
   const { missions, projects, messages, activity, threads, agents, memories, resetWorkspace } =
     useNova();
   const runtime = useAgentRuntime();
+  const cloud = useCloud();
   const memoryCounts = countMemoriesByScope(memories);
 
   const modelLabel =
     NIM_MODELS.find((model) => model.id === runtime.model)?.label ?? runtime.model;
   const disabledAgents = AGENTS.filter((agent) => agents[agent.id]?.enabled === false).length;
   const threadCount = Object.values(threads).reduce((total, list) => total + list.length, 0);
+
+  const cloudTone =
+    cloud.status === 'online'
+      ? colors.success
+      : cloud.status === 'error'
+        ? colors.danger
+        : cloud.status === 'connecting'
+          ? colors.cyan
+          : colors.amber;
+
+  const cloudHeadline =
+    cloud.status === 'online'
+      ? 'CLOUD ONLINE'
+      : cloud.status === 'connecting'
+        ? 'CONNECTING'
+        : cloud.status === 'error'
+          ? 'CLOUD ERROR'
+          : cloud.status === 'signed_out'
+            ? 'CLOUD NOT SIGNED IN'
+            : 'CLOUD OFFLINE';
 
   const handleReset = () => {
     Alert.alert(
@@ -154,13 +176,79 @@ export default function SystemScreen() {
         </Panel>
       </FadeInView>
 
+      <FadeInView delay={30} style={{ marginTop: spacing.xxl }}>
+        <SectionHeader label="Cloud" actionLabel="Open" onAction={() => router.push('/cloud')} />
+        <Panel accent={cloudTone}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <StatusDot color={cloudTone} size={7} />
+            <AppText variant="heading">{cloudHeadline}</AppText>
+          </View>
+          <AppText variant="caption" style={{ marginTop: spacing.sm }}>
+            {cloud.status === 'unconfigured'
+              ? 'No cloud project is configured. The persistent queue and the worker are unavailable; the app stays local-first.'
+              : cloud.status === 'signed_out'
+                ? 'A cloud project is configured. Sign in to reach the persistent queue, company memory and the worker.'
+                : cloud.status === 'online'
+                  ? 'The queue, company memory and worker are reachable. Local missions and conversations are unaffected.'
+                  : 'The cloud project is configured but the last request failed. Open it for the error.'}
+          </AppText>
+
+          {cloud.session ? (
+            <View
+              style={{ marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.hairline }}
+            >
+              <InfoRow label="Account" value={cloud.session.user.email ?? 'signed in'} />
+              <InfoRow
+                label="Queued jobs"
+                value={String(cloud.health?.queue.queued ?? 0)}
+                color={colors.violetBright}
+              />
+              <InfoRow
+                label="Worker"
+                value={
+                  cloud.health?.worker?.alive
+                    ? 'Alive'
+                    : cloud.health?.worker
+                      ? 'Stale'
+                      : 'Not seen'
+                }
+                color={cloud.health?.worker?.alive ? colors.success : colors.amber}
+              />
+            </View>
+          ) : null}
+
+          <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label={cloud.status === 'unconfigured' ? 'Cloud setup' : 'Open cloud'}
+                icon="cloud-outline"
+                variant="ghost"
+                onPress={() => router.push('/cloud')}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Company"
+                icon="briefcase-outline"
+                variant="ghost"
+                onPress={() => router.push('/company')}
+              />
+            </View>
+          </View>
+        </Panel>
+      </FadeInView>
+
       <FadeInView delay={60} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Build" />
         <Panel>
           <InfoRow label="Version" value={`${APP_VERSION} · Phase Three`} />
           <InfoRow label="Platform" value={`${Platform.OS} ${String(Platform.Version)}`} />
           <InfoRow label="Runtime" value="Expo · React Native" />
-          <InfoRow label="Storage" value="On this device only" />
+          <InfoRow
+            label="Storage"
+            value={cloud.session ? 'Local + cloud queue' : 'On this device only'}
+            color={cloud.session ? colors.success : colors.textMuted}
+          />
         </Panel>
       </FadeInView>
 
@@ -230,8 +318,9 @@ export default function SystemScreen() {
             Your NVIDIA API key is stored in the phone&apos;s encrypted keystore and sent only to
             integrate.api.nvidia.com as an Authorization header. It is never written into this
             repository, the app bundle or the workspace database. Model output stays on this phone;
-            treat it as advice, not verified fact. Memories are stored only on this device and are
-            never uploaded to a server.
+            treat it as advice, not verified fact. Memories stay on this device. Signing in to the
+            cloud and choosing to import them copies them into your own row-protected company
+            memory — nothing is uploaded automatically.
           </AppText>
         </Panel>
       </FadeInView>
