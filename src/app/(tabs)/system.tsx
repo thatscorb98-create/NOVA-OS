@@ -157,7 +157,7 @@ export default function SystemScreen() {
       <FadeInView delay={60} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Build" />
         <Panel>
-          <InfoRow label="Version" value={`${APP_VERSION} · Phase Two`} />
+          <InfoRow label="Version" value={`${APP_VERSION} · Phase Three`} />
           <InfoRow label="Platform" value={`${Platform.OS} ${String(Platform.Version)}`} />
           <InfoRow label="Runtime" value="Expo · React Native" />
           <InfoRow label="Storage" value="On this device only" />
