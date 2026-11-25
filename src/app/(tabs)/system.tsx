@@ -1,7 +1,8 @@
 import React from 'react';
-import { Alert, Platform, View } from 'react-native';
+import { Alert, Platform, Pressable, View } from 'react-native';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 import { Screen } from '@/components/ui/Screen';
 import { Panel, SectionHeader } from '@/components/ui/Panel';
@@ -10,14 +11,25 @@ import { StatusDot } from '@/components/ui/Bits';
 import { FadeInView } from '@/components/ui/FadeInView';
 import { NeonButton } from '@/components/ui/NeonButton';
 import { AGENTS } from '@/data/agents';
-import { CORE_STATUS_COLOR, NOVA_CORE } from '@/lib/nova-core';
+import { NIM_MODELS } from '@/lib/model/models';
+import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
 import { colors, spacing } from '@/theme';
 
 const APP_VERSION = Constants.expoConfig?.version ?? '0.1.0';
 
-function InfoRow({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
+function InfoRow({
+  label,
+  value,
+  color,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+  onPress?: () => void;
+}) {
+  const content = (
     <View
       style={{
         flexDirection: 'row',
@@ -30,10 +42,22 @@ function InfoRow({ label, value, color }: { label: string; value: string; color?
       <AppText variant="micro" style={{ letterSpacing: 1 }}>
         {label.toUpperCase()}
       </AppText>
-      <AppText variant="bodyStrong" style={{ fontSize: 13, color: color ?? colors.text }}>
+      <AppText
+        variant="bodyStrong"
+        numberOfLines={1}
+        style={{ fontSize: 13, color: color ?? colors.text, maxWidth: '62%' }}
+      >
         {value}
       </AppText>
     </View>
+  );
+
+  if (!onPress) return content;
+
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+      {content}
+    </Pressable>
   );
 }
 
@@ -54,12 +78,19 @@ function Bullet({ tone, text }: { tone: 'live' | 'planned'; text: string }) {
 }
 
 export default function SystemScreen() {
-  const { missions, projects, messages, activity, resetWorkspace } = useNova();
+  const router = useRouter();
+  const { missions, projects, messages, activity, threads, agents, resetWorkspace } = useNova();
+  const runtime = useAgentRuntime();
+
+  const modelLabel =
+    NIM_MODELS.find((model) => model.id === runtime.model)?.label ?? runtime.model;
+  const disabledAgents = AGENTS.filter((agent) => agents[agent.id]?.enabled === false).length;
+  const threadCount = Object.values(threads).reduce((total, list) => total + list.length, 0);
 
   const handleReset = () => {
     Alert.alert(
       'Reset workspace?',
-      'Missions, projects, chat history and the activity log stored on this device will be erased.',
+      'Missions, projects, conversations, agent memory and the activity log stored on this device will be erased. Your API key stays in the keystore.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -80,20 +111,42 @@ export default function SystemScreen() {
       subtitle="Core status, build information and local data."
     >
       <FadeInView>
-        <SectionHeader label="Reasoning core" />
-        <Panel>
+        <SectionHeader
+          label="Reasoning core"
+          actionLabel="Configure"
+          onAction={() => router.push('/core')}
+        />
+        <Panel accent={runtime.hasKey ? colors.success : colors.amber}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-            <StatusDot color={CORE_STATUS_COLOR} size={7} />
-            <AppText variant="heading">{NOVA_CORE.label}</AppText>
+            <StatusDot color={runtime.hasKey ? colors.success : colors.amber} size={7} />
+            <AppText variant="heading">
+              {runtime.hasKey ? 'CORE ONLINE' : 'CORE OFFLINE'}
+            </AppText>
           </View>
           <AppText variant="caption" style={{ marginTop: spacing.sm }}>
-            {NOVA_CORE.detail}
+            {runtime.hasKey
+              ? 'Agents make real NVIDIA NIM requests. Every result is stored on this device.'
+              : 'No model key is stored. Agents will not answer and missions will not run until you connect the core.'}
           </AppText>
 
           <View style={{ marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.hairline }}>
-            <InfoRow label="Provider" value={NOVA_CORE.provider} />
-            <InfoRow label="Model" value={NOVA_CORE.model ?? 'Not configured'} color={colors.textMuted} />
-            <InfoRow label="Agents registered" value={String(AGENTS.length)} />
+            <InfoRow label="Provider" value="NVIDIA NIM" />
+            <InfoRow label="Model" value={modelLabel} color={colors.textMuted} />
+            <InfoRow
+              label="API key"
+              value={runtime.hasKey ? 'Stored in keystore' : 'Not set'}
+              color={runtime.hasKey ? colors.success : colors.amber}
+            />
+            <InfoRow label="Agents registered" value={`${AGENTS.length} · ${disabledAgents} disabled`} />
+          </View>
+
+          <View style={{ marginTop: spacing.md }}>
+            <NeonButton
+              label={runtime.hasKey ? 'Core settings' : 'Connect the core'}
+              icon="key-outline"
+              variant={runtime.hasKey ? 'ghost' : 'solid'}
+              onPress={() => router.push('/core')}
+            />
           </View>
         </Panel>
       </FadeInView>
@@ -101,7 +154,7 @@ export default function SystemScreen() {
       <FadeInView delay={60} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Build" />
         <Panel>
-          <InfoRow label="Version" value={`${APP_VERSION} · Phase One`} />
+          <InfoRow label="Version" value={`${APP_VERSION} · Phase Two`} />
           <InfoRow label="Platform" value={`${Platform.OS} ${String(Platform.Version)}`} />
           <InfoRow label="Runtime" value="Expo · React Native" />
           <InfoRow label="Storage" value="On this device only" />
@@ -109,11 +162,21 @@ export default function SystemScreen() {
       </FadeInView>
 
       <FadeInView delay={120} style={{ marginTop: spacing.xxl }}>
-        <SectionHeader label="Local workspace" />
+        <SectionHeader
+          label="Local workspace"
+          actionLabel="Agents"
+          onAction={() => router.push('/agents')}
+        />
         <Panel>
           <InfoRow label="Missions" value={String(missions.length)} />
+          <InfoRow
+            label="Delivered results"
+            value={String(missions.filter((mission) => mission.result).length)}
+            color={colors.success}
+          />
           <InfoRow label="Projects" value={String(projects.length)} />
-          <InfoRow label="Chat messages" value={String(messages.length)} />
+          <InfoRow label="NOVA messages" value={String(messages.length)} />
+          <InfoRow label="Agent messages" value={String(threadCount)} />
           <InfoRow label="Activity events" value={String(activity.length)} />
         </Panel>
       </FadeInView>
@@ -121,10 +184,11 @@ export default function SystemScreen() {
       <FadeInView delay={180} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Capability status" />
         <Panel style={{ gap: spacing.sm }}>
-          <Bullet tone="live" text="Native navigation, dashboard, agent roster and local memory." />
-          <Bullet tone="live" text="Missions and projects with real progress derived from your data." />
-          <Bullet tone="planned" text="Live model reasoning with streaming replies (Phase Two)." />
-          <Bullet tone="planned" text="Agent execution, research tools and approval gates (Phase Three)." />
+          <Bullet tone="live" text="Real model calls through NVIDIA NIM with the key you control." />
+          <Bullet tone="live" text="NOVA delegates to ATLAS, FORGE, ECHO, STERLING, RELAY and SENTINEL using tool calls." />
+          <Bullet tone="live" text="Per-agent conversations, memory and completed work persisted on device." />
+          <Bullet tone="live" text="Agents can be enabled, disabled and assigned work individually." />
+          <Bullet tone="planned" text="Live web research, file access and streaming replies are not part of this build." />
         </Panel>
       </FadeInView>
 
@@ -132,16 +196,22 @@ export default function SystemScreen() {
         <SectionHeader label="Security" />
         <Panel>
           <AppText variant="caption">
-            This build contains no API keys. Keys are never written into the app bundle or the
-            repository. When the model core is connected, credentials will be stored in the
-            device&apos;s encrypted keystore and used only for provider requests.
+            Your NVIDIA API key is stored in the phone&apos;s encrypted keystore and sent only to
+            integrate.api.nvidia.com as an Authorization header. It is never written into this
+            repository, the app bundle or the workspace database. Model output stays on this phone;
+            treat it as advice, not verified fact.
           </AppText>
         </Panel>
       </FadeInView>
 
       <FadeInView delay={300} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Danger zone" />
-        <NeonButton label="Reset local workspace" icon="trash-outline" variant="danger" onPress={handleReset} />
+        <NeonButton
+          label="Reset local workspace"
+          icon="trash-outline"
+          variant="danger"
+          onPress={handleReset}
+        />
       </FadeInView>
 
       <AppText variant="micro" align="center" style={{ marginTop: spacing.xxl }}>

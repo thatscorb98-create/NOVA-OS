@@ -2,28 +2,47 @@
 
 A native Android AI-agent operating system, built with **React Native + Expo + TypeScript + Expo Router**.
 
-NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (research), **FORGE** (engineering), **ECHO** (marketing), **STERLING** (business), **RELAY** (operations) and **SENTINEL** (quality & safety).
+NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (research & analysis), **FORGE** (engineering), **ECHO** (marketing & content), **STERLING** (business strategy), **RELAY** (operations) and **SENTINEL** (quality & safety).
 
-> **Current status: Phase One — the application foundation.**
-> The shell, navigation, design system and local workspace are real and working. The AI reasoning core is **not connected yet**, so the app never fakes an agent reply.
+> **Current status: Phase Two — the agent workforce.**
+> All seven agents make real NVIDIA NIM model calls. NOVA delegates work to specialists through tool calls, and every result is persisted on the device. Nothing is scripted or simulated: with no API key, the app says the core is offline instead of inventing an answer.
 
 ---
 
 ## What works today
 
 - Native Android app (Expo Router, six-tab navigation, dark futuristic UI).
-- **Home** command center: animated NOVA core, live workspace stats, mission control, agent network, real activity log.
-- **Chat** layout with message history, suggestions and an honest "core offline" state.
-- **Agents** roster with per-agent profiles, capabilities and assigned missions.
-- **Missions** board: create, link to a project, advance `queued → active → complete`, delete, filter.
-- **Projects** portfolio with progress calculated from completed missions.
-- **System** screen: build info, capability status, security notes, local data reset.
-- All data is stored **on the device** (AsyncStorage) and survives app restarts.
+- **Seven agents**, each with its own role, system instructions, personality, temperature, tool set and persistent memory.
+- **NOVA delegation**: NOVA calls a `delegate_task` tool; the chosen specialist runs with its own prompt and memory, the mission and result are stored, and NOVA reports back what actually happened.
+- **Agent management screen** per agent: enable/disable switch, direct chat, assign-and-run task form, delivered work list, memory viewer/editor.
+- **Mission detail** screen: objective, status, the stored model output, the real tool/delegation steps, model id and duration, plus run/re-run and manual completion.
+- **Core settings**: bring-your-own NVIDIA NIM key stored in the device keystore, model selector, live connection test.
+- **Chat** with NOVA wired to live model calls, a working indicator and honest error messages (rate limits, rejected key, retired model).
+- **Local-first persistence** for missions, projects, conversations, memory, activity and settings; data survives restarts.
+
+## Connect the model
+
+1. Create a free key at **https://build.nvidia.com/settings/api-keys**.
+2. In the app open **System → Core** (or tap the avatar on Chat).
+3. Paste the key, save, then tap **Test**.
+
+The key is stored with `expo-secure-store` (Android Keystore) and sent only to `integrate.api.nvidia.com` as a Bearer token. It is never committed, bundled or written to the workspace database.
+
+Available models (verified live on the NIM endpoint, all with tool calling):
+
+| Model | Use |
+| --- | --- |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | Default: fast, agentic, tool calling |
+| `nvidia/nemotron-3.5-bolt-e4b` | Compact tool calling |
+| `nvidia/nemotron-3-ultra-550b-a55b` | Deep reasoning, slower |
+| `z-ai/glm-5.3-flash` | Fast general model |
+
+The free developer tier is rate limited to roughly 40 requests per minute. A delegation costs several requests: NOVA plans, the specialist works, NOVA summarises.
 
 ## What is not implemented yet
 
-- Live AI reasoning and streaming replies (Phase Two).
-- Real agent execution, web research, coding tools and approval gates (Phase Three).
+- Web browsing, file access and code execution tools for agents (they reason from model knowledge and the stored workspace).
+- Streaming replies; calls are non-streaming for reliability on mobile networks.
 - Accounts, cloud sync and multi-device memory.
 
 ## Run it
@@ -33,14 +52,14 @@ npm install
 npx expo start
 ```
 
-Scan the QR code with **Expo Go** (Android). A phone and the dev machine must be on the same network, or use `npx expo start --tunnel`.
+Scan the QR code with **Expo Go** (Android), or run `npx expo start --tunnel`.
 
 Useful checks:
 
 ```bash
-npm run typecheck     # TypeScript, no errors allowed
-npx expo-doctor       # dependency / config health
-npx expo export --platform android   # proves the Android JS bundle builds
+npm run typecheck                     # TypeScript, no errors allowed
+npx expo-doctor                       # dependency / config health
+npx expo export --platform android    # proves the Android JS bundle builds
 ```
 
 ## Project structure
@@ -49,45 +68,51 @@ npx expo export --platform android   # proves the Android JS bundle builds
 src/
   app/                    Expo Router routes
     (tabs)/               Home · Chat · Agents · Missions · Projects · System
-    agent/[id].tsx        Agent profile
+    agent/[id].tsx        Agent management console (overview · work · chat)
+    mission/[id].tsx      Mission detail and stored result
+    core.tsx              Model key, model choice, connection test
     mission-new.tsx       Mission creation modal
     project-new.tsx       Project creation modal
   components/
     ui/                   AppText, Panel, Screen, NeonButton, Chip, FormField…
-    nova/                 NovaOrb, AgentCard, MissionCard, ProjectCard, Composer…
+    nova/                 NovaOrb, AgentCard, MissionCard, MessageBubble, Composer…
     navigation/           NovaTabBar (custom six-module tab bar)
-  data/agents.ts          The agent roster (definitions, not fake activity)
-  lib/                    storage, ids, time, core connection status
-  store/nova-store.tsx    Persisted workspace state
-  theme/                  Colour, spacing, radius and typography tokens
-  types/                  Shared domain types
-scripts/generate-assets.mjs  Renders the icon, adaptive icon and splash PNGs (npm run assets)
+  data/agents.ts          Agent roster: prompts, personality, tools, temperature
+  lib/model/
+    client.ts             NVIDIA NIM OpenAI-compatible client + typed errors
+    models.ts             Verified model allowlist
+    secure-key.ts         Keystore-backed API key storage
+    tools.ts              Tool schemas exposed to the model
+  lib/storage.ts          AsyncStorage persistence with v1 → v2 migration
+  store/nova-store.tsx    Local workspace state (missions, memory, threads, settings)
+  store/agent-runtime.tsx Real model calls, tool execution, delegation, persistence
+  types/nova.ts           Domain types
 ```
+
+## How a delegation works
+
+1. You message NOVA (or assign a task to an agent directly).
+2. NOVA receives its system prompt plus workspace context and memory, with the `delegate_task` tool available.
+3. The model returns a tool call naming a specialist and a task brief.
+4. The runtime creates a real mission, runs that specialist with its own instructions, memory and workspace access, and stores the output.
+5. The specialist's result is returned to NOVA as a tool message; NOVA writes the final report.
+6. The mission, result, steps, conversation and memory note are persisted on the device.
+
+Every step above is a real request. Failures (invalid key, rate limit, retired model, disabled agent) surface as explicit messages and never produce a fabricated result.
+
+## Security
+
+- No API keys in the repository, the bundle or the chat.
+- The key lives in the platform keystore and is used only for provider requests.
+- Model output is advice, not verified fact; the UI repeats this before you act on it.
+- All workspace data is local to the device and can be wiped from **System → Reset local workspace** (the stored key is kept until you remove it in Core settings).
 
 ## Brand assets
 
-The app icon, Android adaptive icon, splash mark and favicon are **generated**, not hand-drawn:
+`assets/*.png` are generated, not committed:
 
 ```bash
 npm run assets
 ```
 
-`npm install` runs this automatically through `postinstall`, so a fresh clone always has
-buildable assets. The PNGs are git-ignored to keep the repository text-only; the generator
-(`scripts/generate-assets.mjs`) has no dependencies and encodes PNGs with Node's zlib.
-
-## Design language
-
-Black canvas `#04050A`, deep navy panels, neon violet `#8B5CF6`, cyan `#22D3EE`, Space Grotesk for display, Inter for body text, glowing core indicators and restrained motion.
-
-## Security rules
-
-- No API keys are stored in this repository or in the JavaScript bundle.
-- `.env` files are git-ignored.
-- When the model core is connected, keys will live in the device's encrypted keystore.
-
-## Roadmap
-
-1. **Phase Two — Core intelligence.** Connect an NVIDIA NIM model through an encrypted device keystore, streaming replies, conversation memory, model picker.
-2. **Phase Three — Agent execution.** Mission planning, delegation between agents, task monitoring, approval gates, research tools.
-3. **Phase Four — Autonomous operations.** Business analysis, content generation, project automation, scheduled missions.
+`postinstall` runs the generator automatically, so a fresh `npm install` produces the icon, adaptive icon, splash, monochrome and favicon files.
