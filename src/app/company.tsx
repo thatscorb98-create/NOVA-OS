@@ -145,11 +145,58 @@ export default function CompanyScreen() {
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // null means "not edited yet", so the stored value shows and a refresh wins.
+  const [industriesDraft, setIndustriesDraft] = useState<string | null>(null);
+  const [geographyDraft, setGeographyDraft] = useState<string | null>(null);
+  const [capDraft, setCapDraft] = useState<string | null>(null);
+  const [thresholdDraft, setThresholdDraft] = useState<string | null>(null);
+
   const settings = cloud.health?.settings;
   const discoveryEnabled = settings?.discovery_enabled ?? false;
   const cap = settings?.daily_lead_cap ?? 0;
   const threshold = settings?.score_threshold ?? 60;
   const lastRun = cloud.discoveryRuns[0] ?? null;
+
+  const industriesText = industriesDraft ?? (settings?.industries ?? []).join(', ');
+  const geographyText = geographyDraft ?? (settings?.geography ?? []).join(', ');
+  const capText = capDraft ?? String(cap);
+  const thresholdText = thresholdDraft ?? String(threshold);
+
+  const parseList = (value: string): string[] => {
+    const seen = new Set<string>();
+    const items: string[] = [];
+    for (const raw of value.split(',')) {
+      const item = raw.trim().replace(/\s+/g, ' ').slice(0, 60);
+      if (!item) continue;
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(item);
+      if (items.length >= 8) break;
+    }
+    return items;
+  };
+
+  const saveDiscoverySettings = async () => {
+    const capValue = Number.parseInt(capText, 10);
+    const thresholdValue = Number.parseInt(thresholdText, 10);
+
+    const result = await cloud.updateSettings({
+      industries: parseList(industriesText),
+      geography: parseList(geographyText),
+      daily_lead_cap: Number.isFinite(capValue) ? Math.max(0, Math.min(200, capValue)) : cap,
+      score_threshold: Number.isFinite(thresholdValue)
+        ? Math.max(0, Math.min(100, thresholdValue))
+        : threshold,
+    });
+
+    if (result.ok) {
+      setIndustriesDraft(null);
+      setGeographyDraft(null);
+      setCapDraft(null);
+      setThresholdDraft(null);
+    }
+  };
 
   const savePrice = async (service: CloudCatalogService) => {
     const draft = prices[service.id];
@@ -208,7 +255,77 @@ export default function CompanyScreen() {
                 loading={cloud.busy === 'settings'}
               />
             </View>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Outreach"
+                icon="mail-outline"
+                variant="ghost"
+                onPress={() => router.push('/outreach')}
+              />
+            </View>
           </View>
+        </Panel>
+      </FadeInView>
+
+      <FadeInView delay={30} style={{ marginTop: spacing.xxl }}>
+        <SectionHeader label="Discovery settings" />
+        <Panel style={{ gap: spacing.md }}>
+          <AppText variant="caption">
+            ATLAS searches these industries in these areas and keeps what it finds. Leave a field
+            empty and the run falls back to a generic small-business query.
+          </AppText>
+
+          <FormField
+            label="Industries"
+            placeholder="dentists, plumbers, cafes"
+            value={industriesText}
+            onChangeText={setIndustriesDraft}
+            autoCapitalize="none"
+            maxLength={240}
+            hint="Comma separated, up to 8. The first one shapes the search query."
+          />
+
+          <FormField
+            label="Areas"
+            placeholder="Leeds, Bradford"
+            value={geographyText}
+            onChangeText={setGeographyDraft}
+            autoCapitalize="words"
+            maxLength={160}
+            hint="Comma separated, up to 8. The first one is used in the query."
+          />
+
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <FormField
+                label="Daily lead cap"
+                placeholder="20"
+                value={capText}
+                onChangeText={setCapDraft}
+                keyboardType="number-pad"
+                maxLength={3}
+                hint="0 pauses keeping new leads."
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField
+                label="Score threshold"
+                placeholder="60"
+                value={thresholdText}
+                onChangeText={setThresholdDraft}
+                keyboardType="number-pad"
+                maxLength={3}
+                hint="At or above this, a lead qualifies."
+              />
+            </View>
+          </View>
+
+          <NeonButton
+            label="Save settings"
+            icon="save-outline"
+            onPress={() => void saveDiscoverySettings()}
+            loading={cloud.busy === 'settings'}
+          />
         </Panel>
       </FadeInView>
 
