@@ -15,7 +15,7 @@ import { NovaOrb } from '@/components/nova/NovaOrb';
 import { MISSION_STATUS_META } from '@/components/nova/MissionCard';
 import { AGENTS, getAgent } from '@/data/agents';
 import { formatRelative } from '@/lib/time';
-import { CORE_STATUS_COLOR, NOVA_CORE } from '@/lib/nova-core';
+import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
 import { colors, spacing } from '@/theme';
 import type { ActivityEvent, IconName } from '@/types/nova';
@@ -25,13 +25,16 @@ const ACTIVITY_ICONS: Record<ActivityEvent['kind'], IconName> = {
   project: 'layers-outline',
   chat: 'chatbubble-ellipses-outline',
   system: 'pulse-outline',
+  agent: 'people-outline',
 };
 
 export default function HomeScreen() {
   const router = useRouter();
   const { missions, projects, activity } = useNova();
+  const runtime = useAgentRuntime();
 
   const openMissions = missions.filter((mission) => mission.status !== 'complete');
+  const delivered = missions.filter((mission) => mission.result).length;
   const activeCountFor = (agentId: string) =>
     openMissions.filter((mission) => mission.agentId === agentId).length;
 
@@ -45,11 +48,16 @@ export default function HomeScreen() {
       eyebrow="Nova OS"
       title="Command Center"
       subtitle="Your autonomous operations hub."
-      right={<StatusPill label={NOVA_CORE.label} color={CORE_STATUS_COLOR} />}
+      right={
+        <StatusPill
+          label={runtime.hasKey ? 'Core online' : 'Core offline'}
+          color={runtime.hasKey ? colors.success : colors.amber}
+        />
+      }
     >
       <FadeInView>
         <Panel glow style={{ alignItems: 'center', paddingVertical: spacing.xxl }}>
-          <NovaOrb size={148} offline={NOVA_CORE.status !== 'connected'} />
+          <NovaOrb size={148} offline={!runtime.hasKey} />
 
           <AppText variant="title" style={{ marginTop: spacing.md, letterSpacing: 7 }}>
             NOVA
@@ -64,6 +72,24 @@ export default function HomeScreen() {
           >
             {summary}
           </AppText>
+
+          <Pressable onPress={() => router.push('/core')} hitSlop={6}>
+            {({ pressed }) => (
+              <AppText
+                variant="micro"
+                align="center"
+                style={{
+                  marginTop: spacing.md,
+                  letterSpacing: 0.7,
+                  color: runtime.hasKey ? colors.success : pressed ? colors.cyanBright : colors.amber,
+                }}
+              >
+                {runtime.hasKey
+                  ? `CORE LINKED · ${runtime.model.split('/')[1]?.toUpperCase() ?? runtime.model}`
+                  : 'CORE OFFLINE · TAP TO CONNECT YOUR MODEL KEY'}
+              </AppText>
+            )}
+          </Pressable>
 
           <View
             style={{
@@ -91,8 +117,8 @@ export default function HomeScreen() {
       <FadeInView delay={80}>
         <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg }}>
           <StatTile value={String(openMissions.length)} label="Open missions" />
-          <StatTile value={String(projects.length)} label="Projects" accent={colors.cyan} />
-          <StatTile value={String(AGENTS.length)} label="Agents" accent={colors.emerald} />
+          <StatTile value={String(delivered)} label="Delivered" accent={colors.emerald} />
+          <StatTile value={String(AGENTS.length)} label="Agents" accent={colors.cyan} />
         </View>
       </FadeInView>
 
@@ -122,7 +148,7 @@ export default function HomeScreen() {
               return (
                 <Pressable
                   key={mission.id}
-                  onPress={() => router.push('/missions')}
+                  onPress={() => router.push(`/mission/${mission.id}`)}
                   style={({ pressed }) => ({
                     flexDirection: 'row',
                     alignItems: 'center',

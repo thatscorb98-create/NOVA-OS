@@ -49,8 +49,8 @@ export default function AgentsScreen() {
 
       <FadeInView delay={160}>
         <AppText variant="micro" style={{ marginTop: spacing.xl, lineHeight: 16 }}>
-          AGENTS ACTIVATE AS THE MODEL CORE IS CONNECTED. TASK COUNTS ABOVE COME FROM MISSIONS YOU
-          CREATED ON THIS DEVICE.
+          TAP AN AGENT TO CHAT WITH IT, ASSIGN WORK, READ ITS MEMORY OR DISABLE IT. TASK COUNTS COME
+          FROM MISSIONS STORED ON THIS DEVICE.
         </AppText>
       </FadeInView>
     </Screen>

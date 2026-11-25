@@ -17,6 +17,7 @@ import {
   SpaceGrotesk_700Bold,
 } from '@expo-google-fonts/space-grotesk';
 
+import { AgentRuntimeProvider } from '@/store/agent-runtime';
 import { NovaProvider } from '@/store/nova-store';
 import { colors } from '@/theme';
 
@@ -51,25 +52,32 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <NovaProvider>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.bg },
-            animation: 'fade',
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="agent/[id]" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen
-            name="mission-new"
-            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-          <Stack.Screen
-            name="project-new"
-            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-        </Stack>
+        <AgentRuntimeProvider>
+          <StatusBar style="light" />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.bg },
+              animation: 'fade',
+            }}
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="agent/[id]" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="mission/[id]" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen
+              name="core"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="mission-new"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="project-new"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+          </Stack>
+        </AgentRuntimeProvider>
       </NovaProvider>
     </SafeAreaProvider>
   );
