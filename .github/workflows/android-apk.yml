@@ -137,12 +137,17 @@ jobs:
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/nova-os.apk"
           MIRROR=""
 
+          NOTES="Automated build of ${GITHUB_SHA::7}. Cloud configured: ${CLOUD_CONFIGURED:-false}."
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
+            # The body is the only record of which commit the asset came from, so
+            # it is rewritten on every build, not just when the release is made.
+            gh release edit "$TAG" --notes "$NOTES" >/dev/null 2>&1
           else
             gh release create "$TAG" \
               --title "NOVA OS APK (latest build)" \
-              --notes "Automated build of ${GITHUB_SHA::7}. Cloud configured: ${CLOUD_CONFIGURED:-false}." \
+              --notes "$NOTES" \
               --prerelease >/dev/null 2>&1
             gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
           fi
