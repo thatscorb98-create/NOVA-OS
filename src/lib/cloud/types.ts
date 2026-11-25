@@ -153,6 +153,50 @@ export interface CloudCompanySettings {
   geography: string[];
 }
 
+export type OutreachStatus =
+  | 'draft'
+  | 'approved'
+  | 'sending'
+  | 'sent'
+  | 'failed'
+  | 'bounced'
+  | 'replied'
+  | 'cancelled';
+
+export interface CloudOutreachMessage {
+  id: string;
+  lead_id: string | null;
+  to_email: string;
+  to_name: string | null;
+  subject: string;
+  body: string;
+  status: OutreachStatus;
+  created_at: string;
+  approved_at: string | null;
+  sent_at: string | null;
+  failed_reason: string | null;
+}
+
+export interface CloudEmailAccount {
+  provider: string;
+  from_name: string | null;
+  from_email: string | null;
+  inbox_id: string | null;
+  verified: boolean;
+  enabled: boolean;
+}
+
+export const OUTREACH_STATUS_LABEL: Record<OutreachStatus, string> = {
+  draft: 'DRAFT',
+  approved: 'APPROVED',
+  sending: 'SENDING',
+  sent: 'SENT',
+  failed: 'FAILED',
+  bounced: 'BOUNCED',
+  replied: 'REPLIED',
+  cancelled: 'CANCELLED',
+};
+
 export const AUTONOMY_MODES: { key: AutonomyMode; label: string; note: string }[] = [
   { key: 'paused', label: 'Paused', note: 'Nothing runs except recovery jobs.' },
   { key: 'intelligence', label: 'Intelligence', note: 'Discover, research, score and draft only.' },
