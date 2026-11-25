@@ -1,0 +1,17 @@
+# NOVA OS — Supabase CLI configuration.
+#
+# The edge functions enforce their own authentication (a signed-in user's JWT,
+# the service-role key, or the cron secret), so platform-level JWT verification
+# is disabled here. Do not flip these to true: the scheduler and the worker both
+# need to be callable without a user session.
+
+project_id = "nova-os"
+
+[functions.health]
+verify_jwt = false
+
+[functions.worker]
+verify_jwt = false
+
+[functions.scheduler]
+verify_jwt = false
