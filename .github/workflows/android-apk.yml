@@ -3,6 +3,16 @@ name: Build Android APK
 # Free cloud build: runs on GitHub's servers, no computer or Expo account needed.
 # Actions → Build Android APK → Run workflow → the run summary prints a direct
 # download link for the APK (and the same file is attached as an artifact).
+#
+# Cloud configuration comes from repository *variables* (not secrets), because
+# these two values are public by design and ship inside the bundle:
+#   Settings → Secrets and variables → Actions → Variables
+#     SUPABASE_URL       https://<project-ref>.supabase.co
+#     SUPABASE_ANON_KEY  the project's anon/public key
+#
+# If they are absent the build still succeeds, but produces a local-only APK and
+# says so in the summary. Set `require_cloud` to true to make a missing
+# configuration fail the build instead.
 
 on:
   workflow_dispatch:
@@ -11,9 +21,14 @@ on:
         description: 'Git branch or tag to build (empty = the branch you launched from)'
         required: false
         default: ''
+      require_cloud:
+        description: 'Fail the build when SUPABASE_URL / SUPABASE_ANON_KEY are not set'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   apk:
@@ -37,6 +52,52 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+
+      # The two values are written to .env, which Expo reads at bundle time and
+      # inlines into the app. They are never printed: only the host is echoed.
+      - name: Write cloud configuration
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          REQUIRE_CLOUD: ${{ inputs.require_cloud }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -n "${SUPABASE_URL:-}" ] || missing="$missing SUPABASE_URL"
+          [ -n "${SUPABASE_ANON_KEY:-}" ] || missing="$missing SUPABASE_ANON_KEY"
+
+          if [ -n "$missing" ]; then
+            if [ "${REQUIRE_CLOUD:-false}" = "true" ]; then
+              echo "::error::Cloud configuration is required but these repository variables are missing:$missing"
+              echo "Add them under Settings → Secrets and variables → Actions → Variables."
+              exit 1
+            fi
+            echo "::warning::Cloud configuration missing:$missing — building a local-only APK."
+            : > .env
+            echo "CLOUD_CONFIGURED=false" >> "$GITHUB_ENV"
+            {
+              echo "### Cloud: not configured"
+              echo ""
+              echo "APK built for local use only. Missing variables:$missing"
+              echo ""
+              echo "Add them under **Settings → Secrets and variables → Actions → Variables**, then re-run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            umask 077
+            {
+              printf 'EXPO_PUBLIC_SUPABASE_URL=%s\n' "$SUPABASE_URL"
+              printf 'EXPO_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$SUPABASE_ANON_KEY"
+            } > .env
+            host=$(printf '%s' "$SUPABASE_URL" | sed -E 's#^https?://##; s#/.*$##')
+            echo "CLOUD_CONFIGURED=true" >> "$GITHUB_ENV"
+            echo "Cloud configuration written for $host (key not printed)."
+            {
+              echo "### Cloud: configured"
+              echo ""
+              echo "Project host: \`$host\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -64,22 +125,54 @@ jobs:
           cp android/app/build/outputs/apk/release/*.apk build-output/nova-os.apk
           ls -lh build-output
 
+      # A release asset gives a permanent public URL that survives the 90-day
+      # artifact expiry and works from a phone browser without a GitHub login.
       - name: Publish download link
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set +e
           APK=build-output/nova-os.apk
-          URL=$(curl -sS --max-time 300 -F "file=@$APK" -F "expires=72" https://0x0.st || true)
-          if ! printf '%s' "$URL" | grep -q '^https://'; then
-            URL=$(curl -sS --max-time 300 -F "file=@$APK" https://temp.sh/upload || true)
+          TAG=apk-latest
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/nova-os.apk"
+          MIRROR=""
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
+          else
+            gh release create "$TAG" \
+              --title "NOVA OS APK (latest build)" \
+              --notes "Automated build of ${GITHUB_SHA::7}. Cloud configured: ${CLOUD_CONFIGURED:-false}." \
+              --prerelease >/dev/null 2>&1
+            gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
           fi
-          if ! printf '%s' "$URL" | grep -q '^https://'; then
-            URL="upload failed — download the artifact below instead"
+
+          if ! curl -fsSL --max-time 60 -o /dev/null "$RELEASE_URL"; then
+            RELEASE_URL=""
+            MIRROR=$(curl -sS --max-time 300 -F "file=@$APK" -F "expires=72" https://0x0.st || true)
+            if ! printf '%s' "$MIRROR" | grep -q '^https://'; then
+              MIRROR=$(curl -sS --max-time 300 -F "file=@$APK" https://temp.sh/upload || true)
+            fi
           fi
+
+          URL="${RELEASE_URL:-$MIRROR}"
+          if ! printf '%s' "$URL" | grep -q '^https://'; then
+            URL="upload failed — download the \`nova-os-apk\` artifact from this run instead"
+          fi
+
           {
             echo "## NOVA OS APK"
             echo ""
             echo "[Download nova-os.apk]($URL)"
             echo ""
-            echo "Link valid for about 72 hours. The same file is attached as the `nova-os-apk` artifact."
+            echo "Cloud: **${CLOUD_CONFIGURED:-false}**  "
+            echo "Build: \`${GITHUB_SHA::7}\`"
+            echo ""
+            if [ -n "$RELEASE_URL" ]; then
+              echo "Permanent release asset, rebuilt on every run."
+            else
+              echo "Temporary mirror. The same file is attached as the \`nova-os-apk\` artifact."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           echo "APK URL: $URL"
 

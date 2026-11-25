@@ -1,0 +1,146 @@
+name: Deploy Supabase backend
+
+# Applies the SQL migrations and deploys the three edge functions.
+#
+# Required repository *secrets* (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN   personal access token from supabase.com/dashboard/account/tokens
+#   SUPABASE_PROJECT_REF    the project ref, e.g. abcdefghijklmnop
+#   SUPABASE_DB_PASSWORD    the database password set when the project was created
+#
+# Optional secret:
+#   WORKER_SECRET           shared secret for the scheduler; generated on the
+#                           first run and stored as a function secret if absent
+#
+# A push to supabase/** deploys automatically once the secrets exist. Before
+# that it warns and skips, so an unconfigured repository does not fail.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/supabase-deploy.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Migrate and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: config
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${TOKEN:-}" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "${PROJECT_REF:-}" ] || missing="$missing SUPABASE_PROJECT_REF"
+          [ -n "${DB_PASSWORD:-}" ] || missing="$missing SUPABASE_DB_PASSWORD"
+
+          if [ -n "$missing" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              echo "::error::Cannot deploy. Missing repository secrets:$missing"
+              echo "Add them under Settings → Secrets and variables → Actions → Secrets."
+              exit 1
+            fi
+            echo "::warning::Skipping deploy. Missing repository secrets:$missing"
+            {
+              echo "### Supabase deploy skipped"
+              echo ""
+              echo "Missing secrets:$missing"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Supabase CLI
+        if: steps.config.outputs.configured == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+          supabase migration list --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+
+      - name: Apply migrations
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          supabase db push --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" --password "$SUPABASE_DB_PASSWORD"
+
+      # The worker and scheduler authenticate callers with this header value, so
+      # it must exist before the functions go live. A new value is generated only
+      # when no secret is provided, and it is never echoed.
+      - name: Configure worker secret
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          value="${WORKER_SECRET:-}"
+          if [ -z "$value" ]; then
+            value=$(openssl rand -hex 32)
+            echo "::notice::WORKER_SECRET was not set; generated a new one for this deployment."
+            echo "::notice::To keep it stable, add a repository secret named WORKER_SECRET with: $value"
+          fi
+          supabase secrets set WORKER_SECRET="$value" --project-ref "$PROJECT_REF"
+
+      - name: Deploy edge functions
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          supabase functions deploy health worker scheduler \
+            --project-ref "$PROJECT_REF"
+
+      - name: Smoke test the health endpoint
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          url="https://${PROJECT_REF}.supabase.co/functions/v1/health"
+          body=$(curl -fsS --max-time 60 -H 'accept: application/json' "$url")
+          echo "$body" | jq .
+          echo "$body" | jq -e '.ok == true' >/dev/null
+
+          {
+            echo "### Supabase backend deployed"
+            echo ""
+            echo "- Migrations applied"
+            echo "- Functions: \`health\`, \`worker\`, \`scheduler\`"
+            echo "- Health: \`$url\` returned ok"
+            echo ""
+            echo "Next: add the two repository **variables** (SUPABASE_URL, SUPABASE_ANON_KEY) and rebuild the APK."
+          } >> "$GITHUB_STEP_SUMMARY"
