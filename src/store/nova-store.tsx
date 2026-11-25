@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 
 import { createId } from '@/lib/id';
+import { extractTags, normalizeMemoryText } from '@/lib/memory';
 import {
   clearPersistedState,
   emptyState,
@@ -21,9 +22,11 @@ import { DEFAULT_MODEL, isKnownModel } from '@/lib/model/models';
 import type {
   ActivityEvent,
   AgentId,
-  AgentMemory,
   AgentState,
   AppSettings,
+  MemoryKind,
+  MemoryRecord,
+  MemoryScope,
   MemorySource,
   Message,
   Mission,
@@ -35,16 +38,17 @@ import type {
 /**
  * Local-first NOVA workspace.
  *
- * Missions, projects, conversations, agent memory and model settings are real
- * data persisted on the device. The store itself never calls a model: that is
- * the job of AgentRuntimeProvider, so the UI and the intelligence layer stay
+ * Missions, projects, conversations, persistent memories and model settings are
+ * real data persisted on the device. The store never calls a model: that is the
+ * job of AgentRuntimeProvider, so the UI and the intelligence layer stay
  * independent.
  */
 
 const MAX_ACTIVITY = 120;
 const MAX_MESSAGES = 240;
 const MAX_THREAD = 120;
-const MAX_NOTES = 60;
+const MAX_MEMORIES = 600;
+const MAX_MEMORY_CHARS = 1000;
 
 interface NovaState extends PersistedState {}
 
@@ -63,6 +67,22 @@ function initialState(): NovaState {
   };
 }
 
+export interface AddMemoryInput {
+  text: string;
+  scope: MemoryScope;
+  kind?: MemoryKind;
+  source?: MemorySource;
+  agentId?: AgentId;
+  projectId?: string;
+  conversationId?: string;
+  tags?: string[];
+  pinned?: boolean;
+}
+
+export type MemoryPatch = Partial<
+  Pick<MemoryRecord, 'text' | 'kind' | 'pinned' | 'tags' | 'scope' | 'projectId' | 'agentId'>
+>;
+
 type Action =
   | { type: 'hydrate'; state: PersistedState }
   | { type: 'createMission'; mission: Mission; event: ActivityEvent }
@@ -74,13 +94,40 @@ type Action =
   | { type: 'appendThreadMessages'; agentId: AgentId; messages: Message[] }
   | { type: 'clearThread'; agentId: AgentId }
   | { type: 'setAgentEnabled'; agentId: AgentId; enabled: boolean; event: ActivityEvent }
-  | { type: 'addMemoryNote'; agentId: AgentId; note: AgentMemory['notes'][number] }
+  | { type: 'addMemory'; memory: MemoryRecord }
+  | { type: 'touchMemory'; id: string }
+  | { type: 'updateMemory'; id: string; patch: MemoryPatch }
+  | { type: 'deleteMemory'; id: string }
   | { type: 'setSettings'; settings: Partial<AppSettings> }
   | { type: 'recordActivity'; event: ActivityEvent }
   | { type: 'reset' };
 
 function withActivity(state: NovaState, event: ActivityEvent): ActivityEvent[] {
   return [event, ...state.activity].slice(0, MAX_ACTIVITY);
+}
+
+/**
+ * Keep the ledger bounded without ever evicting a pinned memory. Conversation
+ * summaries are evicted first so the automatic chat log can never push out a
+ * fact, preference or decision the owner relies on.
+ */
+function pruneMemories(memories: MemoryRecord[]): MemoryRecord[] {
+  if (memories.length <= MAX_MEMORIES) return memories;
+
+  const pinned = memories.filter((memory) => memory.pinned);
+  const capacity = Math.max(0, MAX_MEMORIES - pinned.length);
+
+  const disposable = memories
+    .filter((memory) => !memory.pinned)
+    .sort((a, b) => {
+      const aChat = a.scope === 'conversation' ? 0 : 1;
+      const bChat = b.scope === 'conversation' ? 0 : 1;
+      return aChat - bChat || a.updatedAt - b.updatedAt;
+    });
+
+  const kept = disposable.slice(disposable.length - capacity);
+
+  return [...pinned, ...kept].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function reducer(state: NovaState, action: Action): NovaState {
@@ -130,6 +177,18 @@ function reducer(state: NovaState, action: Action): NovaState {
         missions: state.missions.map((mission) =>
           mission.projectId === action.id ? { ...mission, projectId: undefined } : mission,
         ),
+        // Project memories are knowledge, not project structure: keep them and
+        // promote them to global so nothing is silently lost.
+        memories: state.memories.map((memory) =>
+          memory.projectId === action.id
+            ? {
+                ...memory,
+                projectId: undefined,
+                scope: memory.scope === 'project' ? 'global' : memory.scope,
+                updatedAt: Date.now(),
+              }
+            : memory,
+        ),
         activity: withActivity(state, action.event),
       };
 
@@ -163,19 +222,40 @@ function reducer(state: NovaState, action: Action): NovaState {
         activity: withActivity(state, action.event),
       };
 
-    case 'addMemoryNote': {
-      const memory = state.memory[action.agentId] ?? { notes: [], updatedAt: 0 };
+    case 'addMemory':
       return {
         ...state,
-        memory: {
-          ...state.memory,
-          [action.agentId]: {
-            notes: [...memory.notes, action.note].slice(-MAX_NOTES),
-            updatedAt: Date.now(),
-          },
-        },
+        memories: pruneMemories([action.memory, ...state.memories]),
       };
-    }
+
+    case 'touchMemory':
+      return {
+        ...state,
+        memories: state.memories.map((memory) =>
+          memory.id === action.id ? { ...memory, updatedAt: Date.now() } : memory,
+        ),
+      };
+
+    case 'updateMemory':
+      return {
+        ...state,
+        memories: state.memories.map((memory) => {
+          if (memory.id !== action.id) return memory;
+
+          const nextText =
+            typeof action.patch.text === 'string' && action.patch.text.trim().length > 0
+              ? action.patch.text.trim().slice(0, MAX_MEMORY_CHARS)
+              : memory.text;
+
+          return { ...memory, ...action.patch, text: nextText, updatedAt: Date.now() };
+        }),
+      };
+
+    case 'deleteMemory':
+      return {
+        ...state,
+        memories: state.memories.filter((memory) => memory.id !== action.id),
+      };
 
     case 'setSettings':
       return { ...state, settings: { ...state.settings, ...action.settings } };
@@ -217,7 +297,10 @@ interface NovaContextValue extends NovaState {
   appendThreadMessages: (agentId: AgentId, messages: Message[]) => void;
   clearThread: (agentId: AgentId) => void;
   setAgentEnabled: (agentId: AgentId, enabled: boolean) => void;
-  addMemoryNote: (agentId: AgentId, text: string, source: MemorySource) => void;
+  addMemory: (input: AddMemoryInput) => MemoryRecord | null;
+  updateMemory: (id: string, patch: MemoryPatch) => void;
+  deleteMemory: (id: string) => void;
+  setMemoryPinned: (id: string, pinned: boolean) => void;
   setModel: (model: string) => void;
   recordActivity: (kind: ActivityEvent['kind'], label: string, detail?: string) => void;
   resetWorkspace: () => Promise<void>;
@@ -390,15 +473,57 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     [activity],
   );
 
-  const addMemoryNote = useCallback((agentId: AgentId, text: string, source: MemorySource) => {
-    const trimmed = text.trim().slice(0, 500);
-    if (!trimmed) return;
+  const addMemory = useCallback(
+    (input: AddMemoryInput): MemoryRecord | null => {
+      const text = input.text.trim().slice(0, MAX_MEMORY_CHARS);
+      if (!text) return null;
 
-    dispatch({
-      type: 'addMemoryNote',
-      agentId,
-      note: { id: createId('mem'), text: trimmed, createdAt: Date.now(), source },
-    });
+      const normalized = normalizeMemoryText(text);
+      const duplicate = state.memories.find(
+        (memory) =>
+          memory.scope === input.scope &&
+          normalizeMemoryText(memory.text) === normalized &&
+          (memory.agentId ?? '') === (input.agentId ?? '') &&
+          (memory.projectId ?? '') === (input.projectId ?? ''),
+      );
+
+      if (duplicate) {
+        dispatch({ type: 'touchMemory', id: duplicate.id });
+        return duplicate;
+      }
+
+      const now = Date.now();
+      const record: MemoryRecord = {
+        id: createId('mem'),
+        text,
+        scope: input.scope,
+        kind: input.kind ?? 'note',
+        source: input.source ?? 'user',
+        agentId: input.agentId,
+        projectId: input.projectId,
+        conversationId: input.conversationId,
+        tags: (input.tags && input.tags.length > 0 ? input.tags : extractTags(text)).slice(0, 8),
+        pinned: input.pinned ?? false,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      dispatch({ type: 'addMemory', memory: record });
+      return record;
+    },
+    [state.memories],
+  );
+
+  const updateMemory = useCallback((id: string, patch: MemoryPatch) => {
+    dispatch({ type: 'updateMemory', id, patch });
+  }, []);
+
+  const deleteMemory = useCallback((id: string) => {
+    dispatch({ type: 'deleteMemory', id });
+  }, []);
+
+  const setMemoryPinned = useCallback((id: string, pinned: boolean) => {
+    dispatch({ type: 'updateMemory', id, patch: { pinned } });
   }, []);
 
   const setModel = useCallback((model: string) => {
@@ -433,7 +558,10 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       appendThreadMessages,
       clearThread,
       setAgentEnabled,
-      addMemoryNote,
+      addMemory,
+      updateMemory,
+      deleteMemory,
+      setMemoryPinned,
       setModel,
       recordActivity,
       resetWorkspace,
@@ -452,7 +580,10 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       appendThreadMessages,
       clearThread,
       setAgentEnabled,
-      addMemoryNote,
+      addMemory,
+      updateMemory,
+      deleteMemory,
+      setMemoryPinned,
       setModel,
       recordActivity,
       resetWorkspace,

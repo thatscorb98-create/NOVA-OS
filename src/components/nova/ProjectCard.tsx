@@ -12,6 +12,8 @@ interface ProjectCardProps {
   project: Project;
   totalMissions: number;
   completedMissions: number;
+  memoryCount?: number;
+  onOpenMemory?: () => void;
   onDelete: () => void;
 }
 
@@ -19,6 +21,8 @@ export function ProjectCard({
   project,
   totalMissions,
   completedMissions,
+  memoryCount = 0,
+  onOpenMemory,
   onDelete,
 }: ProjectCardProps) {
   const progress = totalMissions === 0 ? 0 : completedMissions / totalMissions;
@@ -82,6 +86,7 @@ export function ProjectCard({
         <View
           style={{
             flexDirection: 'row',
+            alignItems: 'center',
             justifyContent: 'space-between',
             marginTop: spacing.sm,
           }}
@@ -91,6 +96,22 @@ export function ProjectCard({
               ? 'NO MISSIONS LINKED'
               : `${completedMissions}/${totalMissions} MISSIONS COMPLETE`}
           </AppText>
+
+          {onOpenMemory ? (
+            <Pressable
+              onPress={onOpenMemory}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Open memory for project ${project.name}`}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            >
+              <Ionicons name="library-outline" size={11} color={project.accent} />
+              <AppText variant="micro" style={{ color: project.accent }}>
+                {memoryCount} MEMORY
+              </AppText>
+            </Pressable>
+          ) : null}
+
           <AppText variant="micro">{formatRelative(project.createdAt).toUpperCase()}</AppText>
         </View>
       </View>
