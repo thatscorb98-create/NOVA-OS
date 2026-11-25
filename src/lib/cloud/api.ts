@@ -5,10 +5,12 @@ import type {
   AutonomyMode,
   CloudCatalogService,
   CloudDiscoveryRun,
+  CloudEmailAccount,
   CloudEvent,
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudOutreachMessage,
   CloudResult,
 } from '@/lib/cloud/types';
 
@@ -260,6 +262,8 @@ export async function updateCompanySettings(
     production_enabled: boolean;
     daily_lead_cap: number;
     score_threshold: number;
+    industries: string[];
+    geography: string[];
   }>,
 ): Promise<void> {
   const ownerId = await currentOwnerId(client);
@@ -282,6 +286,64 @@ export async function enqueueDiscovery(
     p_payload: query?.trim() ? { query: query.trim() } : {},
     p_idempotency_key: `discover:${bucket}`,
     p_priority: 110,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const job = data as { id?: string } | null;
+  return job?.id ?? null;
+}
+
+/* -------------------------------------------------------------- Phase 3 */
+
+export async function loadOutreachMessages(
+  client: SupabaseClient,
+  limit = 40,
+): Promise<CloudOutreachMessage[]> {
+  const { data, error } = await client
+    .from('outreach_messages')
+    .select(
+      'id, lead_id, to_email, to_name, subject, body, status, created_at, approved_at, sent_at, failed_reason',
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudOutreachMessage[];
+}
+
+export async function loadEmailAccount(client: SupabaseClient): Promise<CloudEmailAccount | null> {
+  const { data, error } = await client
+    .from('email_accounts')
+    .select('provider, from_name, from_email, inbox_id, verified, enabled')
+    .maybeSingle();
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data as CloudEmailAccount | null) ?? null;
+}
+
+/**
+ * Approve a draft. The database performs the transition: only a draft can become
+ * approved, and a suppressed address is refused inside the function.
+ */
+export async function approveOutreachMessage(
+  client: SupabaseClient,
+  id: string,
+): Promise<void> {
+  const { error } = await client.rpc('approve_outreach_message', { p_id: id });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/** Queue a draft for one lead. The worker writes the text from stored facts. */
+export async function enqueueDraft(
+  client: SupabaseClient,
+  leadId: string,
+): Promise<string | null> {
+  const { data, error } = await client.rpc('enqueue_agent_job', {
+    p_kind: 'echo.draft_email',
+    p_payload: { leadId },
+    p_idempotency_key: `draft:${leadId}`,
+    p_priority: 140,
   });
 
   if (error) throw new Error(describeCloudError(error));
