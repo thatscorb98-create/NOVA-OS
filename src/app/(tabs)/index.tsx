@@ -14,6 +14,7 @@ import { AgentCard } from '@/components/nova/AgentCard';
 import { NovaOrb } from '@/components/nova/NovaOrb';
 import { MISSION_STATUS_META } from '@/components/nova/MissionCard';
 import { AGENTS, getAgent } from '@/data/agents';
+import { isMissionOpen } from '@/lib/mission';
 import { formatRelative } from '@/lib/time';
 import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
@@ -33,7 +34,7 @@ export default function HomeScreen() {
   const { missions, projects, activity, memories } = useNova();
   const runtime = useAgentRuntime();
 
-  const openMissions = missions.filter((mission) => mission.status !== 'complete');
+  const openMissions = missions.filter(isMissionOpen);
   const delivered = missions.filter((mission) => mission.result).length;
   const activeCountFor = (agentId: string) =>
     openMissions.filter((mission) => mission.agentId === agentId).length;
