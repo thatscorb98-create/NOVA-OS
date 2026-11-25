@@ -55,11 +55,11 @@ export default function AgentScreen() {
     missions,
     projects,
     threads,
-    memory,
+    memories,
     agents,
     setAgentEnabled,
     clearThread,
-    addMemoryNote,
+    addMemory,
     createMission,
   } = useNova();
   const runtime = useAgentRuntime();
@@ -75,7 +75,10 @@ export default function AgentScreen() {
 
   const enabled = agents[agent.id]?.enabled !== false;
   const thread = threads[agent.id] ?? [];
-  const notes = (memory[agent.id]?.notes ?? []).slice().reverse();
+  const notes = memories
+    .filter((memory) => memory.agentId === agent.id)
+    .slice()
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
   const agentMissions = missions.filter((mission) => mission.agentId === agent.id);
   const completed = agentMissions.filter((mission) => mission.result).length;
   const open = agentMissions.filter((mission) => mission.status !== 'complete').length;
@@ -144,7 +147,7 @@ export default function AgentScreen() {
 
   const handleRemember = () => {
     if (!note.trim()) return;
-    addMemoryNote(agent.id, note, 'user');
+    addMemory({ text: note, scope: 'agent', kind: 'fact', source: 'user', agentId: agent.id });
     setNote('');
     Haptics.selectionAsync().catch(() => {});
   };
@@ -444,7 +447,11 @@ export default function AgentScreen() {
                 </View>
 
                 <View>
-                  <SectionHeader label={`Memory ${notes.length > 0 ? `· ${notes.length}` : ''}`} />
+                  <SectionHeader
+                    label={`Memory ${notes.length > 0 ? `· ${notes.length}` : ''}`}
+                    actionLabel="Manage"
+                    onAction={() => router.push(`/memory?agentId=${agent.id}`)}
+                  />
                   <Panel style={{ gap: spacing.md }}>
                     {notes.length === 0 ? (
                       <AppText variant="caption">
@@ -467,7 +474,9 @@ export default function AgentScreen() {
                               {entry.text}
                             </AppText>
                             <AppText variant="micro">
-                              {entry.source.toUpperCase()} · {formatRelative(entry.createdAt).toUpperCase()}
+                              {entry.kind.toUpperCase()} · {entry.source.toUpperCase()} ·{' '}
+                              {formatRelative(entry.updatedAt).toUpperCase()}
+                              {entry.pinned ? ' · PINNED' : ''}
                             </AppText>
                           </View>
                         ))}
