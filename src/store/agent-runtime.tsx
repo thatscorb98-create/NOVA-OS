@@ -12,6 +12,13 @@ import { getAgent, isAgentId } from '@/data/agents';
 import { createId } from '@/lib/id';
 import { extractTags, formatMemoriesForPrompt, recallMemories } from '@/lib/memory';
 import {
+  MISSION_LIMITS,
+  nextRunnableTask,
+  parseMissionPlan,
+  parseMissionReview,
+  strandedTasks,
+} from '@/lib/mission';
+import {
   chatCompletion,
   describeModelError,
   ModelError,
@@ -27,15 +34,21 @@ import type {
   AgentToolId,
   Message,
   Mission,
+  MissionApproval,
+  MissionBudget,
   MissionResult,
+  MissionStatus,
+  MissionTask,
+  Project,
 } from '@/types/nova';
 
 /**
  * The intelligence layer.
  *
  * This provider performs real NVIDIA NIM chat completions, executes the tools
- * the model requests against the local workspace, delegates to specialist
- * agents, and persists every result. It never synthesises an agent reply.
+ * the model requests against the local workspace, plans missions, delegates the
+ * planned tasks, reviews the output, retries failures and writes a final report.
+ * It never synthesises an agent reply.
  */
 
 const MAX_HISTORY = 14;
@@ -72,6 +85,9 @@ interface AgentRuntimeValue {
   sendNovaMessage: (text: string) => Promise<RuntimeResult>;
   sendAgentMessage: (agentId: AgentId, text: string) => Promise<RuntimeResult>;
   runMission: (missionId: string) => Promise<RuntimeResult>;
+  approveMission: (missionId: string) => Promise<RuntimeResult>;
+  rejectMission: (missionId: string) => Promise<RuntimeResult>;
+  retryMissionTask: (missionId: string, taskId: string) => Promise<RuntimeResult>;
   assignAndRun: (input: AssignTaskInput) => Promise<RuntimeResult>;
   isBusy: (key: string) => boolean;
   clearError: () => void;
@@ -102,6 +118,10 @@ function toModelHistory(messages: Message[]): ModelMessage[] {
       role: message.role === 'user' ? 'user' : 'assistant',
       content: message.text,
     }));
+}
+
+function replaceTask(tasks: MissionTask[], next: MissionTask): MissionTask[] {
+  return tasks.map((task) => (task.id === next.id ? next : task));
 }
 
 export function AgentRuntimeProvider({ children }: { children: React.ReactNode }) {
@@ -615,7 +635,661 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       });
     }
 
-    return { buildSystemPrompt, executeAgent, executeMission, rememberExchange };
+    function plannerPrompt(project?: Project): string {
+      const state = current();
+      const recalled = recallMemories({
+        memories: state.memories,
+        query: 'mission planning constraints preferences decisions',
+        agentId: 'nova',
+        projectId: project?.id,
+        limit: 8,
+      });
+      const notes = formatMemoriesForPrompt(recalled, state.projects);
+
+      return [
+        getAgent('nova').systemPrompt,
+        'You are planning a mission that a small team of specialist agents will execute one task at a time. You do not execute anything yourself in this step.',
+        `Available specialists: atlas (research and analysis), forge (engineering), echo (marketing and content), sterling (business strategy and finance), relay (operations and sequencing), sentinel (quality, risk and review).`,
+        `Return ONLY valid JSON, no prose and no code fences, in exactly this shape:\n{"tasks":[{"title":"short action","brief":"complete self-contained instructions with deliverable and constraints","agent":"atlas","depends_on":[]}]}`,
+        `Rules: 1 to ${MISSION_LIMITS.maxTasks} tasks. Use only the six specialist ids above, never nova. Dependencies are zero-based indexes of earlier tasks in the same array. Every brief must stand alone, name the deliverable, and be small enough for one focused response. The last task must produce the outcome the owner asked for. Do not plan work that already exists in the workspace.`,
+        project ? `Linked project: ${project.name} — ${project.description}` : '',
+        notes ? `Owner memory that constrains this plan:\n${notes}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    function taskPrompt(mission: Mission, task: MissionTask, tasks: MissionTask[]): string {
+      const state = current();
+      const project = mission.projectId
+        ? state.projects.find((entry) => entry.id === mission.projectId)
+        : undefined;
+      const index = tasks.findIndex((entry) => entry.id === task.id) + 1;
+
+      const prior = tasks
+        .filter((entry) => entry.status === 'complete' && entry.output)
+        .map((entry) => `- ${entry.title} (${getAgent(entry.agentId).name}): ${truncate(entry.output ?? '', 320)}`)
+        .join('\n');
+
+      return [
+        `Mission goal: ${mission.title}`,
+        mission.objective ? `Owner brief: ${mission.objective}` : '',
+        project ? `Project: ${project.name} — ${project.description}` : '',
+        `Your task ${index} of ${tasks.length}: ${task.title}`,
+        `Task brief: ${task.brief}`,
+        prior ? `Finished work from earlier tasks:\n${prior}` : '',
+        `You are ${getAgent(task.agentId).name}. Produce the finished deliverable for this task now. Do not describe what you would do; do the work. State assumptions briefly and keep the output readable on a phone.`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    function reviewPrompt(task: MissionTask): { system: string; user: string } {
+      return {
+        system: [
+          getAgent('sentinel').systemPrompt,
+          'You are reviewing one completed task inside an automated mission. Be strict but practical: the owner is paying for usable output, not perfection.',
+          'Return ONLY JSON: {"verdict":"pass","notes":"one or two sentences naming the strongest point and the specific fix if any"}',
+          'Use verdict "retry" only when the output is incomplete, ignores the brief, contains placeholders, or asserts facts it cannot support. Otherwise pass it.',
+        ].join('\n\n'),
+        user: [
+          `Task: ${task.title}`,
+          `Brief: ${task.brief}`,
+          `Attempt: ${task.attempt} of ${task.maxAttempts}`,
+          `Output:\n${task.output ?? '(no output)'}`,
+        ].join('\n\n'),
+      };
+    }
+
+    function reportPrompt(mission: Mission, tasks: MissionTask[]): { system: string; user: string } {
+      const digest = tasks
+        .map((task) => {
+          const agent = getAgent(task.agentId);
+          return [
+            `## ${task.title} — ${agent.name} — ${task.status.toUpperCase()}`,
+            task.review?.notes ? `Review: ${task.review.notes}` : '',
+            task.error ? `Error: ${task.error}` : '',
+            `Result: ${truncate(task.output ?? '(no output produced)', 900)}`,
+          ]
+            .filter(Boolean)
+            .join('\n');
+        })
+        .join('\n\n');
+
+      return {
+        system: [
+          getAgent('nova').systemPrompt,
+          'You are writing the final report for a finished mission. The owner reads it on a phone.',
+          'Use only the task results below. Never claim work that did not complete. Be concrete and compact.',
+          'Format as plain text with these four short sections: OUTCOME (2-4 sentences), DELIVERED (one line per completed task), ISSUES (failed or unverified work, or "None"), NEXT (at most three actions).',
+        ].join('\n\n'),
+        user: [
+          `Mission: ${mission.title}`,
+          mission.objective ? `Goal: ${mission.objective}` : '',
+          `Tasks planned: ${tasks.length}`,
+          digest,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      };
+    }
+
+    /**
+     * Full planned-mission run: plan, delegate each ready task, review it, retry
+     * within the attempt limit, pause for approval where needed, then report.
+     *
+     * Every model call is counted against mission.budget.callsUsed and the loop
+     * is bounded by MISSION_LIMITS.maxSteps, so a mission can never run forever.
+     */
+    async function runPlannedMission(
+      missionId: string,
+      afterApproval = false,
+    ): Promise<RuntimeResult> {
+      const state = current();
+      const found = state.missions.find((entry) => entry.id === missionId);
+
+      if (!found) return { ok: false, error: 'That mission no longer exists.' };
+
+      let mission: Mission = found;
+      if (!apiKeyRef.current) {
+        return {
+          ok: false,
+          error: 'The core is offline. Add your NVIDIA API key in Core settings first.',
+        };
+      }
+      if (mission.status === 'cancelled') {
+        return { ok: false, error: 'This mission was cancelled. Create a new one to continue.' };
+      }
+
+      const budget: MissionBudget = {
+        ...mission.budget,
+        maxTasks: MISSION_LIMITS.maxTasks,
+        maxCalls: MISSION_LIMITS.maxCalls,
+        maxAttempts: MISSION_LIMITS.maxAttempts,
+      };
+
+      const save = (patch: Partial<Mission>) => {
+        mission = { ...mission, ...patch, updatedAt: Date.now() } as Mission;
+        state.patchMission(missionId, { ...patch, updatedAt: mission.updatedAt });
+      };
+
+      const log = (label: string, detail?: string) => {
+        save({
+          history: [
+            { id: createId('evt'), label, detail, createdAt: Date.now() },
+            ...(mission?.history ?? []),
+          ].slice(0, 60),
+        });
+      };
+
+      const useCall = () => {
+        if (budget.callsUsed >= budget.maxCalls) {
+          throw new ModelError(
+            `Mission call budget reached (${budget.maxCalls} model requests). Start a new mission for more work.`,
+            'config',
+          );
+        }
+        budget.callsUsed += 1;
+        save({ budget: { ...budget } });
+      };
+
+      if (afterApproval) {
+        if (mission.approval?.status === 'pending') {
+          save({ approval: { ...mission.approval, status: 'approved', resolvedAt: Date.now() } });
+        }
+        if (mission.status === 'awaiting_approval') save({ status: 'active' });
+      }
+
+      if (mission.approval?.status === 'pending') {
+        return { ok: true, text: 'This mission is waiting for your approval.', missionId };
+      }
+
+      if (!budget.deadlineAt || budget.deadlineAt < Date.now()) {
+        budget.deadlineAt = Date.now() + MISSION_LIMITS.runWindowMs;
+        save({ budget: { ...budget } });
+      }
+
+      /* ---------------------------------------------------------------- plan */
+
+      if (mission.kind === 'planned' && mission.tasks.length === 0) {
+        save({ status: 'planning', startedAt: Date.now() });
+        log('Planning started', 'NOVA is decomposing the goal');
+
+        const project = mission.projectId
+          ? state.projects.find((entry) => entry.id === mission.projectId)
+          : undefined;
+
+        let planText = '';
+        let planModel = modelRef.current;
+
+        try {
+          useCall();
+          const completion = await chatCompletion({
+            apiKey: apiKeyRef.current as string,
+            model: modelRef.current,
+            messages: [
+              { role: 'system', content: plannerPrompt(project) },
+              {
+                role: 'user',
+                content: [
+                  `Goal: ${mission.title}`,
+                  mission.objective ? `Owner brief: ${mission.objective}` : 'No extra brief was given.',
+                  `Produce the plan JSON now. Maximum ${MISSION_LIMITS.maxTasks} tasks.`,
+                ].join('\n\n'),
+              },
+            ],
+            temperature: 0.2,
+            maxTokens: 900,
+          });
+          planText = completion.text;
+          planModel = completion.model || planModel;
+        } catch (error) {
+          const message = describeModelError(error);
+          save({ status: 'queued' });
+          log('Planning failed', message);
+          state.recordActivity('mission', 'Planning failed', `${mission.title}: ${message}`);
+          return { ok: false, error: message, missionId };
+        }
+
+        const parsed = parseMissionPlan(planText);
+
+        if (!parsed.ok) {
+          save({ status: 'queued' });
+          log('Plan rejected', parsed.error);
+          return { ok: false, error: parsed.error, missionId };
+        }
+
+        const ids = parsed.tasks.map(() => createId('tsk'));
+        const tasks: MissionTask[] = parsed.tasks.map((draft, index) => ({
+          id: ids[index],
+          title: draft.title,
+          brief: draft.brief,
+          agentId: draft.agentId,
+          status: 'queued',
+          dependsOn: draft.dependsOnIndexes
+            .map((dependencyIndex) => ids[dependencyIndex])
+            .filter((value): value is string => typeof value === 'string'),
+          attempt: 0,
+          maxAttempts: budget.maxAttempts,
+        }));
+
+        const needsApproval = mission.mode === 'review';
+        const approval: MissionApproval | undefined = needsApproval
+          ? {
+              id: createId('apr'),
+              kind: 'plan',
+              status: 'pending',
+              note: `${tasks.length} task${tasks.length === 1 ? '' : 's'} planned. Approve to start execution.`,
+              createdAt: Date.now(),
+            }
+          : undefined;
+
+        save({
+          tasks,
+          planModel,
+          planCreatedAt: Date.now(),
+          status: needsApproval ? 'awaiting_approval' : 'active',
+          approval,
+        });
+        log(
+          `Plan ready · ${tasks.length} task${tasks.length === 1 ? '' : 's'}`,
+          parsed.trimmed ? `Trimmed to the ${MISSION_LIMITS.maxTasks} task limit.` : undefined,
+        );
+        state.recordActivity(
+          'mission',
+          needsApproval ? 'Plan awaiting approval' : 'Plan ready',
+          `${mission.title} · ${tasks.length} tasks`,
+        );
+
+        if (needsApproval) {
+          return { ok: true, text: 'Plan ready for your approval.', missionId };
+        }
+      }
+
+      if (mission.tasks.length === 0) {
+        return { ok: false, error: 'This mission has no plan to execute.', missionId };
+      }
+
+      /* ------------------------------------------------------------- execute */
+
+      let tasks = mission.tasks;
+      let paused = false;
+
+      const updateTask = (next: MissionTask) => {
+        tasks = replaceTask(tasks, next);
+        save({ tasks });
+      };
+
+      const pauseForApproval = (label: string, note: string, taskId?: string) => {
+        const approval: MissionApproval = {
+          id: createId('apr'),
+          kind: 'escalation',
+          status: 'pending',
+          note,
+          taskId,
+          createdAt: Date.now(),
+        };
+        save({ status: 'awaiting_approval', approval });
+        log(label, note);
+        state.recordActivity('mission', label, mission.title);
+      };
+
+      for (let step = 0; step < MISSION_LIMITS.maxSteps; step += 1) {
+        if (current().missions.find((entry) => entry.id === missionId)?.status === 'cancelled') {
+          return { ok: false, error: 'Mission cancelled.', missionId };
+        }
+
+        if (Date.now() > budget.deadlineAt) {
+          pauseForApproval(
+            'Run window ended',
+            `The ${Math.round(MISSION_LIMITS.runWindowMs / 60_000)} minute window ended. Approve to continue with the remaining call budget.`,
+          );
+          paused = true;
+          break;
+        }
+
+        if (budget.callsUsed >= budget.maxCalls) {
+          save({ status: 'failed' });
+          log(
+            'Call budget exhausted',
+            `Stopped after ${budget.callsUsed} model requests (hard limit ${MISSION_LIMITS.maxCalls}).`,
+          );
+          state.recordActivity('mission', 'Call budget exhausted', mission.title);
+          return {
+            ok: false,
+            error: `Mission stopped at the ${MISSION_LIMITS.maxCalls} call limit.`,
+            missionId,
+          };
+        }
+
+        const next = nextRunnableTask(tasks);
+        if (!next) break;
+
+        let task: MissionTask = {
+          ...next,
+          status: 'running',
+          attempt: next.attempt + 1,
+          startedAt: Date.now(),
+          error: undefined,
+        };
+        updateTask(task);
+        save({ status: 'active' });
+        log(
+          `Running: ${task.title}`,
+          `${getAgent(task.agentId).name} · attempt ${task.attempt}/${task.maxAttempts}`,
+        );
+
+        let output = '';
+        let model = modelRef.current;
+        let failure: string | null = null;
+
+        try {
+          useCall();
+          const agent = getAgent(task.agentId);
+          const completion = await chatCompletion({
+            apiKey: apiKeyRef.current as string,
+            model: modelRef.current,
+            messages: [
+              {
+                role: 'system',
+                content: buildSystemPrompt(
+                  agent,
+                  `${mission.title} ${task.title}`,
+                  mission.projectId,
+                ),
+              },
+              { role: 'user', content: taskPrompt(mission, task, tasks) },
+            ],
+            temperature: agent.temperature,
+            maxTokens: 1300,
+          });
+          output = completion.text.trim();
+          model = completion.model || model;
+          if (!output) failure = 'The agent returned an empty response.';
+        } catch (error) {
+          failure = describeModelError(error);
+        }
+
+        if (failure) {
+          const exhausted = task.attempt >= task.maxAttempts;
+          const finishedAt = Date.now();
+          task = {
+            ...task,
+            status: exhausted ? 'blocked' : 'queued',
+            error: failure,
+            output: output || undefined,
+            model,
+            finishedAt,
+            durationMs: finishedAt - (task.startedAt ?? finishedAt),
+          };
+          updateTask(task);
+
+          if (exhausted) {
+            pauseForApproval(
+              'Task failed',
+              `${getAgent(task.agentId).name} could not finish "${task.title}" after ${task.attempt} attempt(s): ${failure}`,
+              task.id,
+            );
+            paused = true;
+            break;
+          }
+
+          log(`Retrying: ${task.title}`, failure);
+          continue;
+        }
+
+        /* ---------------------------------------------------------- review */
+
+        task = { ...task, status: 'review', output, model };
+        updateTask(task);
+        save({ status: 'reviewing' });
+        log(`Reviewing: ${task.title}`, 'SENTINEL is checking the output against the brief');
+
+        let verdict = { verdict: 'pass' as 'pass' | 'retry', notes: 'Meets the brief.' };
+
+        try {
+          useCall();
+          const review = reviewPrompt(task);
+          const completion = await chatCompletion({
+            apiKey: apiKeyRef.current as string,
+            model: modelRef.current,
+            messages: [
+              { role: 'system', content: review.system },
+              { role: 'user', content: review.user },
+            ],
+            temperature: 0.1,
+            maxTokens: 320,
+          });
+          verdict = parseMissionReview(completion.text);
+        } catch (error) {
+          verdict = {
+            verdict: 'pass',
+            notes: `Review skipped: ${truncate(describeModelError(error), 160)}`,
+          };
+        }
+
+        const finishedAt = Date.now();
+        const reviewRecord = {
+          verdict: verdict.verdict,
+          notes: verdict.notes,
+          model: modelRef.current,
+          createdAt: finishedAt,
+        };
+
+        if (verdict.verdict === 'pass') {
+          task = {
+            ...task,
+            status: 'complete',
+            review: reviewRecord,
+            error: undefined,
+            finishedAt,
+            durationMs: finishedAt - (task.startedAt ?? finishedAt),
+          };
+          updateTask(task);
+          log(`Task complete: ${task.title}`, verdict.notes);
+          continue;
+        }
+
+        if (task.attempt < task.maxAttempts) {
+          task = {
+            ...task,
+            status: 'queued',
+            review: reviewRecord,
+            error: 'Review requested a revision.',
+            brief: `${task.brief}\n\nReviewer requested changes: ${verdict.notes}`,
+            finishedAt,
+            durationMs: finishedAt - (task.startedAt ?? finishedAt),
+          };
+          updateTask(task);
+          log(`Revision requested: ${task.title}`, verdict.notes);
+          continue;
+        }
+
+        task = {
+          ...task,
+          status: 'blocked',
+          review: reviewRecord,
+          error: `Review failed after ${task.maxAttempts} attempt(s): ${verdict.notes}`,
+          finishedAt,
+          durationMs: finishedAt - (task.startedAt ?? finishedAt),
+        };
+        updateTask(task);
+        pauseForApproval(
+          'Task blocked by review',
+          `"${task.title}" did not pass review after ${task.maxAttempts} attempt(s). Retry it, accept the failure, or cancel.`,
+          task.id,
+        );
+        paused = true;
+        break;
+      }
+
+      /* ------------------------------------------------------ dependency sweep */
+
+      const stranded = strandedTasks(tasks);
+      if (stranded.length > 0) {
+        const strandedIds = new Set(stranded.map((task) => task.id));
+        tasks = tasks.map((task) =>
+          strandedIds.has(task.id)
+            ? { ...task, status: 'failed' as const, error: 'A dependency did not complete.' }
+            : task,
+        );
+        save({ tasks });
+        log('Dependency blocked', `${stranded.length} task(s) could not run`);
+      }
+
+      if (paused) {
+        return { ok: true, text: 'Paused for your approval.', missionId };
+      }
+
+      if (current().missions.find((entry) => entry.id === missionId)?.approval?.status === 'pending') {
+        return { ok: true, text: 'Waiting for your approval.', missionId };
+      }
+
+      const completed = tasks.filter((task) => task.status === 'complete');
+      const failedTasks = tasks.filter(
+        (task) => task.status === 'failed' || task.status === 'blocked',
+      );
+
+      if (completed.length === 0) {
+        save({ status: 'failed' });
+        log('Mission failed', 'No task produced a deliverable.');
+        state.recordActivity('mission', 'Mission failed', mission.title);
+        return {
+          ok: false,
+          error: 'No task produced a deliverable. Check the review notes, then retry a task.',
+          missionId,
+        };
+      }
+
+      /* -------------------------------------------------------------- report */
+
+      save({ status: 'reviewing' });
+      log(
+        'Writing final report',
+        `${completed.length} complete · ${failedTasks.length} failed · ${budget.callsUsed} calls`,
+      );
+
+      const { system, user } = reportPrompt(mission, tasks);
+      let reportText = '';
+      let reportModel = modelRef.current;
+
+      try {
+        useCall();
+        const completion = await chatCompletion({
+          apiKey: apiKeyRef.current as string,
+          model: modelRef.current,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          temperature: 0.3,
+          maxTokens: 900,
+        });
+        reportText = completion.text.trim();
+        reportModel = completion.model || reportModel;
+      } catch (error) {
+        reportText = [
+          'A model-written report was not produced.',
+          describeModelError(error),
+          '',
+          'DELIVERED',
+          ...completed.map((task) => `- ${task.title}: ${truncate(task.output ?? '', 240)}`),
+          '',
+          'ISSUES',
+          failedTasks.length === 0
+            ? 'None'
+            : failedTasks.map((task) => `- ${task.title}: ${task.error ?? 'failed'}`).join('\n'),
+        ].join('\n');
+        reportModel = 'system';
+      }
+
+      const now = Date.now();
+      const durationMs = now - budget.startedAt;
+      const status: MissionStatus = failedTasks.length > 0 ? 'failed' : 'complete';
+      const summary = `Mission "${mission.title}" ${status === 'complete' ? 'completed' : 'finished with issues'} — ${completed.length}/${tasks.length} tasks delivered.`;
+
+      save({
+        status,
+        report: {
+          text: reportText,
+          model: reportModel,
+          createdAt: now,
+          completed: completed.length,
+          failed: failedTasks.length,
+          callsUsed: budget.callsUsed,
+          durationMs,
+        },
+        result: {
+          text: reportText,
+          agentId: 'nova',
+          model: reportModel,
+          createdAt: now,
+          durationMs,
+          steps: tasks.map(
+            (task) =>
+              `${getAgent(task.agentId).name} · ${task.title} · ${task.status.toUpperCase()}${
+                task.review ? ` · review ${task.review.verdict}` : ''
+              }`,
+          ),
+        },
+      });
+      log('Mission finished', `${completed.length}/${tasks.length} tasks delivered`);
+      state.recordActivity(
+        'mission',
+        status === 'complete' ? 'Mission completed' : 'Mission finished with issues',
+        summary,
+      );
+
+      state.addMemory({
+        text: `${summary} ${truncate(reportText, 400)}`,
+        scope: 'agent',
+        kind: 'summary',
+        source: 'mission',
+        agentId: 'nova',
+        projectId: mission.projectId,
+        tags: extractTags(`${mission.title} ${mission.objective}`),
+      });
+
+      if (mission.projectId) {
+        state.addMemory({
+          text: `Project mission "${mission.title}" — ${truncate(reportText, 400)}`,
+          scope: 'project',
+          kind: 'summary',
+          source: 'mission',
+          projectId: mission.projectId,
+          tags: extractTags(`${mission.title} ${mission.objective}`),
+        });
+      }
+
+      state.appendThreadMessages('nova', [
+        {
+          id: createId('msg'),
+          role: 'user',
+          text: `Mission: ${mission.title}\n\n${mission.objective}`.trim(),
+          createdAt: now,
+        },
+        { id: createId('msg'), role: 'nova', text: reportText, createdAt: now },
+      ]);
+
+      if (status === 'failed') {
+        return {
+          ok: false,
+          error: `${completed.length} task(s) delivered, ${failedTasks.length} failed. See the report.`,
+          missionId,
+          text: reportText,
+        };
+      }
+
+      return { ok: true, text: reportText, missionId };
+    }
+
+    return {
+      buildSystemPrompt,
+      executeAgent,
+      executeMission,
+      rememberExchange,
+      runPlannedMission,
+    };
   }, []);
 
   const saveKey = useCallback(async (key: string): Promise<RuntimeResult> => {
@@ -779,7 +1453,142 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
           return { ok: false, error: 'That mission no longer exists.' };
         }
 
+        if (mission.kind === 'planned') {
+          return engine.runPlannedMission(missionId);
+        }
+
         return engine.executeMission(mission);
+      }),
+    [engine, withBusy],
+  );
+
+  const approveMission = useCallback(
+    (missionId: string): Promise<RuntimeResult> =>
+      withBusy(`mission:${missionId}`, async () => {
+        const state = novaRef.current;
+        const mission = state.missions.find((entry) => entry.id === missionId);
+
+        if (!mission) return { ok: false, error: 'That mission no longer exists.' };
+        if (!mission.approval || mission.approval.status !== 'pending') {
+          return { ok: false, error: 'Nothing is waiting for your approval on this mission.' };
+        }
+
+        const now = Date.now();
+        const approval: MissionApproval = {
+          ...mission.approval,
+          status: 'approved',
+          resolvedAt: now,
+        };
+
+        if (approval.kind === 'escalation' && approval.taskId) {
+          const tasks = mission.tasks.map((task) =>
+            task.id === approval.taskId &&
+            (task.status === 'blocked' || task.status === 'failed')
+              ? { ...task, status: 'failed' as const }
+              : task,
+          );
+          state.patchMission(missionId, { approval, tasks, status: 'active' });
+          state.recordActivity('mission', 'Failure accepted', mission.title);
+        } else {
+          state.patchMission(missionId, {
+            approval,
+            status: 'active',
+            budget: { ...mission.budget, deadlineAt: now + MISSION_LIMITS.runWindowMs },
+          });
+          state.recordActivity(
+            'mission',
+            approval.kind === 'plan' ? 'Plan approved' : 'Mission resumed',
+            mission.title,
+          );
+        }
+
+        return engine.runPlannedMission(missionId, true);
+      }),
+    [engine, withBusy],
+  );
+
+  const rejectMission = useCallback(
+    (missionId: string): Promise<RuntimeResult> =>
+      withBusy(`mission:${missionId}`, async () => {
+        const state = novaRef.current;
+        const mission = state.missions.find((entry) => entry.id === missionId);
+
+        if (!mission) return { ok: false, error: 'That mission no longer exists.' };
+
+        const now = Date.now();
+        state.patchMission(missionId, {
+          status: 'cancelled',
+          approval: mission.approval
+            ? { ...mission.approval, status: 'rejected', resolvedAt: now }
+            : undefined,
+          history: [
+            {
+              id: createId('evt'),
+              label: 'Mission cancelled',
+              detail: 'Cancelled by the owner.',
+              createdAt: now,
+            },
+            ...mission.history,
+          ].slice(0, 60),
+        });
+        state.recordActivity('mission', 'Mission cancelled', mission.title);
+        return { ok: true, missionId };
+      }),
+    [withBusy],
+  );
+
+  const retryMissionTask = useCallback(
+    (missionId: string, taskId: string): Promise<RuntimeResult> =>
+      withBusy(`mission:${missionId}`, async () => {
+        const state = novaRef.current;
+        const mission = state.missions.find((entry) => entry.id === missionId);
+
+        if (!mission) return { ok: false, error: 'That mission no longer exists.' };
+
+        if (mission.budget.callsUsed >= MISSION_LIMITS.maxCalls) {
+          return {
+            ok: false,
+            error: `This mission used its ${MISSION_LIMITS.maxCalls} call budget. Create a new mission to continue the work.`,
+          };
+        }
+
+        const target = mission.tasks.find((task) => task.id === taskId);
+        if (!target) return { ok: false, error: 'That task no longer exists.' };
+
+        const now = Date.now();
+        const tasks = mission.tasks.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                status: 'queued' as const,
+                attempt: 0,
+                error: undefined,
+                review: undefined,
+                finishedAt: undefined,
+              }
+            : task,
+        );
+
+        state.patchMission(missionId, {
+          tasks,
+          status: 'active',
+          approval:
+            mission.approval?.status === 'pending'
+              ? { ...mission.approval, status: 'rejected', resolvedAt: now }
+              : mission.approval,
+          budget: { ...mission.budget, deadlineAt: now + MISSION_LIMITS.runWindowMs },
+          history: [
+            {
+              id: createId('evt'),
+              label: `Task retried: ${target.title}`,
+              detail: 'Attempt counter reset by the owner.',
+              createdAt: now,
+            },
+            ...mission.history,
+          ].slice(0, 60),
+        });
+
+        return engine.runPlannedMission(missionId, true);
       }),
     [engine, withBusy],
   );
@@ -824,6 +1633,9 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       sendNovaMessage,
       sendAgentMessage,
       runMission,
+      approveMission,
+      rejectMission,
+      retryMissionTask,
       assignAndRun,
       isBusy,
       clearError,
@@ -840,6 +1652,9 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       sendNovaMessage,
       sendAgentMessage,
       runMission,
+      approveMission,
+      rejectMission,
+      retryMissionTask,
       assignAndRun,
       isBusy,
       clearError,
