@@ -10,6 +10,7 @@ import React, {
 
 import { getAgent, isAgentId } from '@/data/agents';
 import { createId } from '@/lib/id';
+import { extractTags, formatMemoriesForPrompt, recallMemories } from '@/lib/memory';
 import {
   chatCompletion,
   describeModelError,
@@ -157,7 +158,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
   const engine = useMemo(() => {
     const current = () => novaRef.current;
 
-    function buildSystemPrompt(agent: Agent): string {
+    function buildSystemPrompt(agent: Agent, query = '', projectId?: string): string {
       const state = current();
       const projects = state.projects
         .slice(0, 8)
@@ -179,10 +180,24 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         .map((mission) => `- ${mission.title} → ${truncate(mission.result?.text ?? '', 150)}`)
         .join('\n');
 
-      const notes = (state.memory[agent.id]?.notes ?? [])
-        .slice(-12)
-        .map((note) => `- ${note.text}`)
-        .join('\n');
+      const recalled = recallMemories({
+        memories: state.memories,
+        query,
+        agentId: agent.id,
+        projectId,
+        limit: 10,
+      });
+
+      const pinned = state.memories.filter((memory) => memory.pinned).slice(0, 6);
+
+      const seen = new Set<string>();
+      const mergedMemory = [...pinned, ...recalled].filter((memory) => {
+        if (seen.has(memory.id)) return false;
+        seen.add(memory.id);
+        return true;
+      });
+
+      const notes = formatMemoriesForPrompt(mergedMemory, state.projects);
 
       return [
         agent.systemPrompt,
@@ -192,8 +207,10 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         projects ? `Projects:\n${projects}` : 'No projects exist yet.',
         openMissions ? `Open missions:\n${openMissions}` : 'There are no open missions.',
         completed ? `Recent completed work:\n${completed}` : 'No work has been completed yet.',
-        notes ? `Your memory notes:\n${notes}` : 'You have no memory notes yet.',
-        'Rules: never invent a tool result or claim an action happened unless a tool returned it. If a request needs live web access, data or execution you do not have, say exactly what is missing.',
+        notes
+          ? `Your persistent memory, recalled for this turn:\n${notes}\nUse it when relevant; do not recite it unless asked.`
+          : 'Your persistent memory is empty. Save durable facts with save_memory.',
+        'Rules: never invent a tool result or claim an action happened unless a tool returned it. If the owner refers to earlier work, preferences or previous conversations, call recall_memory before answering. If a request needs live web access, data or execution you do not have, say exactly what is missing.',
       ].join('\n\n');
     }
 
@@ -201,11 +218,27 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       const state = current();
       const agent = getAgent(mission.agentId);
       state.setMissionResult(mission.id, result);
-      state.addMemoryNote(
-        mission.agentId,
-        `Completed "${mission.title}": ${truncate(result.text, 220)}`,
-        'mission',
-      );
+
+      state.addMemory({
+        text: `Mission "${mission.title}" delivered by ${agent.name}: ${truncate(result.text, 400)}`,
+        scope: 'agent',
+        kind: 'note',
+        source: 'mission',
+        agentId: mission.agentId,
+        tags: extractTags(`${mission.title} ${mission.objective}`),
+      });
+
+      if (mission.projectId) {
+        state.addMemory({
+          text: `Project work — "${mission.title}" (${agent.name}): ${truncate(result.text, 400)}`,
+          scope: 'project',
+          kind: 'note',
+          source: 'mission',
+          projectId: mission.projectId,
+          tags: extractTags(`${mission.title} ${mission.objective}`),
+        });
+      }
+
       state.appendThreadMessages(mission.agentId, [
         {
           id: createId('msg'),
@@ -264,6 +297,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
           prompt,
           state.threads[agent.id] ?? [],
           agent.tools,
+          mission.projectId,
         );
 
         const result: MissionResult = {
@@ -296,9 +330,84 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         case 'save_memory': {
           const note = String(args.note ?? '').trim();
           if (!note) return 'No note was provided, so nothing was saved.';
-          state.addMemoryNote(agent.id, note, 'agent');
-          steps.push(`Saved to memory: ${truncate(note, 80)}`);
-          return 'Saved to your permanent memory.';
+
+          const requestedScope = String(args.scope ?? 'agent');
+          const scope =
+            requestedScope === 'global' || requestedScope === 'project' ? requestedScope : 'agent';
+          const requestedKind = String(args.kind ?? 'fact');
+          const kind =
+            requestedKind === 'preference' ||
+            requestedKind === 'decision' ||
+            requestedKind === 'note'
+              ? requestedKind
+              : 'fact';
+
+          const projectId = scope === 'project' ? String(args.project_id ?? '') : undefined;
+
+          if (scope === 'project' && !state.projects.some((entry) => entry.id === projectId)) {
+            return 'No project matches that project_id. Call list_workspace for the real project ids.';
+          }
+
+          const tags = Array.isArray(args.tags)
+            ? args.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
+            : extractTags(note);
+
+          const saved = state.addMemory({
+            text: note,
+            scope,
+            kind,
+            source: 'agent',
+            agentId: scope === 'agent' ? agent.id : undefined,
+            projectId,
+            tags,
+          });
+
+          if (!saved) return 'The note was empty, so nothing was saved.';
+
+          steps.push(`Saved ${scope} memory: ${truncate(note, 80)}`);
+          return `Saved memory ${saved.id} in ${scope} scope. It is now in the owner’s memory ledger and can be recalled later.`;
+        }
+
+        case 'recall_memory': {
+          const query = String(args.query ?? '').trim();
+          if (!query) return 'Give recall_memory a topic to search for.';
+
+          const requestedScope = String(args.scope ?? 'all');
+          const validScope =
+            requestedScope === 'global' ||
+            requestedScope === 'project' ||
+            requestedScope === 'agent' ||
+            requestedScope === 'conversation';
+
+          const pool = validScope
+            ? state.memories.filter((memory) => memory.scope === requestedScope)
+            : state.memories;
+
+          const results = recallMemories({
+            memories: pool,
+            query,
+            agentId: agent.id,
+            limit: 8,
+            minScore: 1,
+          });
+
+          steps.push(`Recalled ${results.length} memories for "${truncate(query, 60)}"`);
+
+          if (results.length === 0) {
+            return `No memories matched "${query}". Tell the owner you have nothing saved on that instead of guessing.`;
+          }
+
+          return JSON.stringify({
+            query,
+            memories: results.map((memory) => ({
+              id: memory.id,
+              text: memory.text,
+              scope: memory.scope,
+              kind: memory.kind,
+              project_id: memory.projectId ?? null,
+              updated_at: memory.updatedAt,
+            })),
+          });
         }
 
         case 'list_workspace': {
@@ -316,7 +425,16 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
               name: project.name,
               description: truncate(project.description, 180),
             })),
-            your_memory: (state.memory[agent.id]?.notes ?? []).slice(-10).map((note) => note.text),
+            your_memory: recallMemories({
+              memories: state.memories,
+              query: '',
+              agentId: agent.id,
+              limit: 12,
+            }).map((memory) => ({
+              id: memory.id,
+              text: memory.text,
+              scope: memory.scope,
+            })),
           };
           steps.push(`Read the workspace (${state.missions.length} missions)`);
           return JSON.stringify(workspace);
@@ -401,6 +519,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       prompt: string,
       history: Message[],
       toolIds: AgentToolId[],
+      projectId?: string,
     ): Promise<RunOutput> {
       const key = apiKeyRef.current;
       if (!key) {
@@ -412,7 +531,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
 
       const startedAt = Date.now();
       const messages: ModelMessage[] = [
-        { role: 'system', content: buildSystemPrompt(agent) },
+        { role: 'system', content: buildSystemPrompt(agent, prompt, projectId) },
         ...toModelHistory(history),
         { role: 'user', content: prompt },
       ];
@@ -475,7 +594,28 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       };
     }
 
-    return { buildSystemPrompt, executeAgent, executeMission };
+    /**
+     * Conversation memory: every substantive exchange is written to the ledger so
+     * it can be recalled in a later session. No extra model call, no invention —
+     * the record contains the real question and the real answer.
+     */
+    function rememberExchange(agentId: AgentId, question: string, answer: string) {
+      const state = current();
+      const trimmed = question.trim();
+      if (trimmed.length < 8 || answer.trim().length === 0) return;
+
+      state.addMemory({
+        text: `Conversation with ${getAgent(agentId).name} — owner asked: "${truncate(trimmed, 180)}" · answer: "${truncate(answer, 320)}"`,
+        scope: 'conversation',
+        kind: 'summary',
+        source: 'conversation',
+        agentId,
+        conversationId: `${agentId}-${new Date().toISOString().slice(0, 10)}`,
+        tags: extractTags(trimmed),
+      });
+    }
+
+    return { buildSystemPrompt, executeAgent, executeMission, rememberExchange };
   }, []);
 
   const saveKey = useCallback(async (key: string): Promise<RuntimeResult> => {
@@ -555,6 +695,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
           state.appendMessages([
             { id: createId('msg'), role: 'nova', text: run.text, createdAt: Date.now() },
           ]);
+          engine.rememberExchange('nova', trimmed, run.text);
           if (run.steps.length > 0) {
             state.recordActivity('agent', 'NOVA used tools', truncate(run.steps.join(' · '), 300));
           }
@@ -610,6 +751,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
               createdAt: Date.now(),
             },
           ]);
+          engine.rememberExchange(agentId, trimmed, run.text);
           if (run.steps.length > 0) {
             state.recordActivity('agent', `${agent.name} used tools`, truncate(run.steps.join(' · '), 300));
           }

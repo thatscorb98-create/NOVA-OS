@@ -86,7 +86,6 @@ export function ProjectCard({
         <View
           style={{
             flexDirection: 'row',
-            alignItems: 'center',
             justifyContent: 'space-between',
             marginTop: spacing.sm,
           }}
