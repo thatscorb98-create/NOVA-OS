@@ -126,6 +126,47 @@ npx expo-doctor                       # dependency / config health
 npx expo export --platform android    # proves the Android JS bundle builds
 ```
 
+## Build the APK and install it on your phone
+
+No computer is required. The repository carries a free cloud build (`.github/workflows/android-apk.yml`) that produces a signed release APK on GitHub's servers, and `eas.json` for Expo's own free tier.
+
+### Option A — GitHub Actions (free, phone only)
+
+1. Open the repository on **github.com** in your phone's browser and sign in.
+2. Tap **Actions** → **Build Android APK** → **Run workflow** → **Run workflow**.
+3. Wait roughly 10–20 minutes for the run to finish with a green tick.
+4. Open that run and download the **nova-os-apk** artifact.
+5. Unzip the download with the Files app or ZArchiver — it contains `nova-os.apk`.
+6. Tap the APK. Android asks once for permission to install unknown apps: allow it for the app you opened the file from, then tap **Install**.
+
+Builds are signed with the same keystore every run, so a newer APK installs straight over an older one and your missions and memory are kept.
+
+### Option B — EAS Build (Expo's free tier)
+
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest build --platform android --profile preview
+```
+
+`preview` produces an installable APK (`"buildType": "apk"`); `production` produces an `.aab` for Google Play. EAS generates and stores the Android keystore on the first build and prints a download link and QR code when the build finishes. Both options are free for personal use — queued builds on EAS can take a while, GitHub Actions builds start immediately.
+
+### What the configuration sets
+
+| Setting | Value |
+| --- | --- |
+| App name | NOVA OS |
+| Package | `com.novaos.app` |
+| Version / code | `0.1.0` / `1` (`versionCode` in `app.json`) |
+| Permissions | `INTERNET`, `VIBRATE` — nothing else is requested |
+| Icon | 512×512 (above every Android density bucket), plus adaptive foreground and monochrome layers on `#04050A` |
+| Splash | Generated mark on `#04050A`, 220 px wide, dark mode identical |
+| Secure storage | `expo-secure-store`, Android Keystore, excluded from cloud backup |
+| Signing | Debug keystore from the Expo template (sideloading only, not Play Store) |
+
+The APK is self-contained: the JavaScript bundle and fonts are inside it, so it runs without Metro. Only model requests need a connection.
+
+Bump `android.versionCode` in `app.json` before each new release you hand out; Android installs an update only when the version code is higher.
+
 ## Project structure
 
 ```
