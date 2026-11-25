@@ -11,6 +11,7 @@ import { StatusDot } from '@/components/ui/Bits';
 import { FadeInView } from '@/components/ui/FadeInView';
 import { NeonButton } from '@/components/ui/NeonButton';
 import { AGENTS } from '@/data/agents';
+import { countMemoriesByScope } from '@/lib/memory';
 import { NIM_MODELS } from '@/lib/model/models';
 import { useAgentRuntime } from '@/store/agent-runtime';
 import { useNova } from '@/store/nova-store';
@@ -79,8 +80,10 @@ function Bullet({ tone, text }: { tone: 'live' | 'planned'; text: string }) {
 
 export default function SystemScreen() {
   const router = useRouter();
-  const { missions, projects, messages, activity, threads, agents, resetWorkspace } = useNova();
+  const { missions, projects, messages, activity, threads, agents, memories, resetWorkspace } =
+    useNova();
   const runtime = useAgentRuntime();
+  const memoryCounts = countMemoriesByScope(memories);
 
   const modelLabel =
     NIM_MODELS.find((model) => model.id === runtime.model)?.label ?? runtime.model;
@@ -181,12 +184,40 @@ export default function SystemScreen() {
         </Panel>
       </FadeInView>
 
+      <FadeInView delay={150} style={{ marginTop: spacing.xxl }}>
+        <SectionHeader
+          label="Persistent memory"
+          actionLabel="Open"
+          onAction={() => router.push('/memory')}
+        />
+        <Panel>
+          <InfoRow label="Memories" value={String(memories.length)} />
+          <InfoRow
+            label="Pinned"
+            value={String(memories.filter((memory) => memory.pinned).length)}
+            color={colors.amber}
+          />
+          <InfoRow label="Project" value={String(memoryCounts.project)} color={colors.cyan} />
+          <InfoRow label="Agent" value={String(memoryCounts.agent)} color={colors.emerald} />
+          <InfoRow label="Conversations" value={String(memoryCounts.conversation)} />
+          <View style={{ marginTop: spacing.md }}>
+            <NeonButton
+              label="Review saved memories"
+              icon="library-outline"
+              variant="ghost"
+              onPress={() => router.push('/memory')}
+            />
+          </View>
+        </Panel>
+      </FadeInView>
+
       <FadeInView delay={180} style={{ marginTop: spacing.xxl }}>
         <SectionHeader label="Capability status" />
         <Panel style={{ gap: spacing.sm }}>
           <Bullet tone="live" text="Real model calls through NVIDIA NIM with the key you control." />
           <Bullet tone="live" text="NOVA delegates to ATLAS, FORGE, ECHO, STERLING, RELAY and SENTINEL using tool calls." />
           <Bullet tone="live" text="Per-agent conversations, memory and completed work persisted on device." />
+          <Bullet tone="live" text="Persistent memory across conversations, projects and agents, recalled on every turn and fully editable." />
           <Bullet tone="live" text="Agents can be enabled, disabled and assigned work individually." />
           <Bullet tone="planned" text="Live web research, file access and streaming replies are not part of this build." />
         </Panel>
@@ -199,7 +230,8 @@ export default function SystemScreen() {
             Your NVIDIA API key is stored in the phone&apos;s encrypted keystore and sent only to
             integrate.api.nvidia.com as an Authorization header. It is never written into this
             repository, the app bundle or the workspace database. Model output stays on this phone;
-            treat it as advice, not verified fact.
+            treat it as advice, not verified fact. Memories are stored only on this device and are
+            never uploaded to a server.
           </AppText>
         </Panel>
       </FadeInView>
