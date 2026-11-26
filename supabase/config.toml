@@ -18,3 +18,9 @@ verify_jwt = false
 
 [functions.webhook]
 verify_jwt = false
+
+# Public acceptance links: the customer has no account, so the signature in the
+# token is the authorization. The owner-only minting path checks the session in
+# code, and the acceptance itself is a service-role database function.
+[functions.quote]
+verify_jwt = false
