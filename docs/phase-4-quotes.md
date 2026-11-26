@@ -1,22 +1,39 @@
-# Phase 4 — quotes and payment intents
+# Phase 4 — quotes, acceptance links and payment records
 
 The roadmap rule: **payment creation is permitted only after the customer
-expressly accepts.** This phase enforces it in the database rather than in the
-handler, so no code path can skip it.
+expressly accepts.** It is enforced in the database rather than in the handler,
+so no code path can skip it.
 
 ## The chain
 
-`draft → sent → accepted → payment intent`
+`draft → sent → accepted → payment record`
 
 - `send_quote` is owner-only and refuses a draft whose expiry has passed.
+- The acceptance link carries an HMAC over the quote id and an expiry time
+  (`supabase/functions/_shared/quote-link.ts`). The signing secret is a function
+  secret (`QUOTE_LINK_SECRET`, falling back to `WORKER_SECRET`) and never reaches
+  the app.
 - `accept_quote` is service-role only, requires a sent and unexpired quote, and
-  records `accepted_at`, `accepted_via` and who accepted.
+  records `accepted_at`, `accepted_via` and who accepted. It also moves the deal
+  to `ready_to_purchase`.
 - `create_payment_intent` refuses unless the quote is accepted, the amount is
   positive and `business_settings.payments_live` is true.
 
-Nothing charges. An intent starts as `requires_payment`, and `succeeded` is
-rejected without a provider reference, so a payment that never happened cannot
-be recorded as one.
+Nothing charges. A record starts as `requires_payment`, and `succeeded` is
+rejected without a provider reference, so a payment that never happened cannot be
+recorded as one. `relay.record_payment` stores a provider's real result and needs
+that reference for `succeeded`.
+
+## What the app does
+
+`src/app/quotes.tsx`:
+
+- writes a draft quote against a researched or qualified lead, with an amount the
+  owner types — NOVA never guesses a price
+- releases a draft (`send_quote`)
+- mints a signed acceptance link for a sent quote and shares it
+- shows accepted quotes and their payment records
+- has the payments switch, which is off by default
 
 ## What the SQL suite asserts
 
@@ -33,9 +50,11 @@ be recorded as one.
 
 ## What is not built
 
-- No provider integration. `provider` is `none` until a Stripe key exists, and
-  there is no charge call anywhere in the codebase.
-- No quote screen yet. The tables and functions are callable and tested; the app
-  has no UI for composing or sending a quote.
-- No public acceptance endpoint. Acceptance is a service-role function waiting for
-  a signed link handler.
+- No payment provider integration. `provider` is `none`; there is no Stripe client
+  and no charge call anywhere in the codebase. With `STRIPE_SECRET_KEY` unset the
+  intent handler records what is owed and says nothing can be collected.
+- No invoice PDF, no receipts, no refunds, no delivery. Those belong to the
+  production phase.
+- The acceptance page was exercised by the SQL function and inspected as code;
+  it has not been served from a deployed project, because no Supabase project is
+  configured for this repository yet.
