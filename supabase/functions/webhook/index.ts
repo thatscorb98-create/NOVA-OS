@@ -21,6 +21,8 @@ interface EventBody {
   to?: string;
   reason?: string;
   detail?: string;
+  /** The reply text, when the provider supplies it. Only used for intent labels. */
+  text?: string;
 }
 
 const KIND_BY_TYPE: Record<string, 'delivered' | 'bounced' | 'complained' | 'replied' | 'unsubscribed' | 'other'> = {
@@ -83,42 +85,29 @@ Deno.serve(async (req) => {
       return json({ ok: true, ignored: true, reason: 'unknown message', version: SERVICE_VERSION });
     }
 
-    await admin.from('email_events').insert({
-      owner_id: message.owner_id,
-      message_id: message.id,
-      kind,
-      detail: (body.detail ?? body.reason ?? '').slice(0, 500) || null,
-      payload: body,
+    // One database function owns the write path: it appends the event, derives a
+    // deterministic intent from the reply text, suppresses an opt-out and moves
+    // the deal only on a real reply. The handler never decides ownership.
+    const { data: recorded, error: recordError } = await admin.rpc('record_email_event', {
+      p_message_id: message.id,
+      p_kind: kind,
+      p_detail: (body.detail ?? body.reason ?? '').slice(0, 500) || null,
+      p_text: typeof body.text === 'string' ? body.text.slice(0, 4000) : null,
+      p_payload: body,
     });
 
-    if (kind === 'bounced' || kind === 'complained' || kind === 'unsubscribed') {
-      await admin.rpc('suppress_email', {
-        p_email: message.to_email,
-        p_reason:
-          kind === 'unsubscribed' ? 'unsubscribe' : kind === 'complained' ? 'complaint' : 'bounce',
-        p_note: `Recorded from a provider ${kind} event.`,
-        p_owner_id: message.owner_id,
-      });
-    }
+    if (recordError) throw new Error(recordError.message);
 
-    if (kind === 'replied') {
-      await admin
-        .from('outreach_messages')
-        .update({ status: 'replied' })
-        .eq('id', message.id)
-        .in('status', ['sent', 'delivered']);
+    const result = (recorded ?? {}) as { intent?: string; suppressed?: boolean };
 
-      if (message.lead_id) {
-        await admin
-          .from('deals')
-          .update({ stage: 'replied', next_action: 'Read the reply and answer it yourself.' })
-          .eq('owner_id', message.owner_id)
-          .eq('lead_id', message.lead_id)
-          .in('stage', ['contacted', 'qualified']);
-      }
-    }
-
-    return json({ ok: true, kind, messageId: message.id, version: SERVICE_VERSION });
+    return json({
+      ok: true,
+      kind,
+      messageId: message.id,
+      intent: result.intent ?? 'other',
+      suppressed: result.suppressed === true,
+      version: SERVICE_VERSION,
+    });
   } catch (thrown) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     return fail(message, 500);
