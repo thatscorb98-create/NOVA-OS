@@ -15,6 +15,8 @@ import { isCloudConfigured, missingCloudVariables } from '@/lib/cloud/config';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudContact,
+  CloudDeal,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -22,7 +24,11 @@ import type {
   CloudJob,
   CloudLead,
   CloudOutreachMessage,
+  CloudPaymentIntent,
+  CloudQuote,
+  CloudReply,
   CloudResult,
+  DealStage,
 } from '@/lib/cloud/types';
 import { useNova } from '@/store/nova-store';
 
@@ -52,6 +58,8 @@ type BusyKey =
   | 'catalog'
   | 'settings'
   | 'outreach'
+  | 'quote'
+  | 'deal'
   | null;
 
 interface CloudContextValue {
@@ -67,6 +75,12 @@ interface CloudContextValue {
   discoveryRuns: CloudDiscoveryRun[];
   outreach: CloudOutreachMessage[];
   emailAccount: CloudEmailAccount | null;
+  contacts: CloudContact[];
+  suppressedEmails: string[];
+  quotes: CloudQuote[];
+  paymentIntents: CloudPaymentIntent[];
+  deals: CloudDeal[];
+  replies: CloudReply[];
   lastError: string | null;
   lastMessage: string | null;
   busy: BusyKey;
@@ -91,9 +105,22 @@ interface CloudContextValue {
     geography?: string[];
     daily_lead_cap?: number;
     score_threshold?: number;
+    payments_live?: boolean;
   }) => Promise<CloudResult>;
   approveMessage: (id: string) => Promise<CloudResult>;
   draftForLead: (leadId: string) => Promise<CloudResult>;
+  createQuote: (input: {
+    leadId: string;
+    title: string;
+    scope: string;
+    amountCents: number;
+    deliveryDays: number;
+    expiresInDays: number;
+  }) => Promise<CloudResult>;
+  sendQuote: (id: string) => Promise<CloudResult>;
+  quoteLink: (id: string) => Promise<CloudResult>;
+  recordPaymentDue: (quoteId: string) => Promise<CloudResult>;
+  setDealStage: (id: string, stage: DealStage) => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -113,6 +140,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [discoveryRuns, setDiscoveryRuns] = useState<CloudDiscoveryRun[]>([]);
   const [outreach, setOutreach] = useState<CloudOutreachMessage[]>([]);
   const [emailAccount, setEmailAccount] = useState<CloudEmailAccount | null>(null);
+  const [contacts, setContacts] = useState<CloudContact[]>([]);
+  const [suppressedEmails, setSuppressedEmails] = useState<string[]>([]);
+  const [quotes, setQuotes] = useState<CloudQuote[]>([]);
+  const [paymentIntents, setPaymentIntents] = useState<CloudPaymentIntent[]>([]);
+  const [deals, setDeals] = useState<CloudDeal[]>([]);
+  const [replies, setReplies] = useState<CloudReply[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyKey>(null);
@@ -156,6 +189,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns([]);
       setOutreach([]);
       setEmailAccount(null);
+      setContacts([]);
+      setSuppressedEmails([]);
+      setQuotes([]);
+      setPaymentIntents([]);
+      setDeals([]);
+      setReplies([]);
       return;
     }
 
@@ -170,6 +209,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextRuns,
         nextOutreach,
         nextAccount,
+        nextContacts,
+        nextSuppressed,
+        nextQuotes,
+        nextIntents,
+        nextDeals,
+        nextReplies,
       ] = await Promise.all([
         cloudApi.loadHealth(client),
         cloudApi.loadJobs(client),
@@ -179,6 +224,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDiscoveryRuns(client),
         cloudApi.loadOutreachMessages(client),
         cloudApi.loadEmailAccount(client),
+        cloudApi.loadContacts(client),
+        cloudApi.loadSuppressedEmails(client),
+        cloudApi.loadQuotes(client),
+        cloudApi.loadPaymentIntents(client),
+        cloudApi.loadDeals(client),
+        cloudApi.loadReplies(client),
       ]);
 
       setHealth(nextHealth);
@@ -189,6 +240,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns(nextRuns);
       setOutreach(nextOutreach);
       setEmailAccount(nextAccount);
+      setContacts(nextContacts);
+      setSuppressedEmails(nextSuppressed);
+      setQuotes(nextQuotes);
+      setPaymentIntents(nextIntents);
+      setDeals(nextDeals);
+      setReplies(nextReplies);
       setLastError(null);
     } catch (error) {
       setLastError(cloudApi.describeCloudError(error));
@@ -207,6 +264,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns([]);
       setOutreach([]);
       setEmailAccount(null);
+      setContacts([]);
+      setSuppressedEmails([]);
+      setQuotes([]);
+      setPaymentIntents([]);
+      setDeals([]);
+      setReplies([]);
       return;
     }
     void refresh();
@@ -258,6 +321,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     setDiscoveryRuns([]);
     setOutreach([]);
     setEmailAccount(null);
+    setContacts([]);
+    setSuppressedEmails([]);
+    setQuotes([]);
+    setPaymentIntents([]);
+    setDeals([]);
+    setReplies([]);
     setLastError(null);
     setLastMessage(null);
   }, []);
@@ -484,6 +553,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       geography?: string[];
       daily_lead_cap?: number;
       score_threshold?: number;
+      payments_live?: boolean;
     }): Promise<CloudResult> => {
       const client = getSupabase();
       if (!client) return { ok: false, error: 'No cloud project is configured.' };
@@ -495,7 +565,13 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       try {
         await cloudApi.updateCompanySettings(client, patch);
         await refresh();
-        setLastMessage('Discovery settings saved.');
+        setLastMessage(
+          patch.payments_live === undefined
+            ? 'Discovery settings saved.'
+            : patch.payments_live
+              ? 'Payments are live for recording amounts owed. No provider is connected, so nothing is charged.'
+              : 'Payments are switched off.',
+        );
         return { ok: true };
       } catch (error) {
         const message = cloudApi.describeCloudError(error);
@@ -562,6 +638,139 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const createQuote = useCallback(
+    async (input: {
+      leadId: string;
+      title: string;
+      scope: string;
+      amountCents: number;
+      deliveryDays: number;
+      expiresInDays: number;
+    }): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('quote');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.createQuote(client, input);
+        await refresh();
+        setLastMessage('Quote saved as a draft. Send it when the amount is right.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const sendQuote = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('quote');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.sendQuote(client, id);
+        await refresh();
+        setLastMessage('Quote released. Create the acceptance link when you are ready to send it.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const quoteLink = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('quote');
+      setLastError(null);
+
+      try {
+        const link = await cloudApi.mintQuoteLink(client, id);
+        return { ok: true, detail: link.url };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
+
+  const recordPaymentDue = useCallback(
+    async (quoteId: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('quote');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const jobId = await cloudApi.enqueuePaymentIntent(client, quoteId);
+        const detail = jobId
+          ? 'Payment record queued. Run the worker to store it.'
+          : 'A payment record job for this quote is already queued.';
+
+        setLastMessage(detail);
+        await refresh();
+        return { ok: true, detail };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const setDealStage = useCallback(
+    async (id: string, stage: DealStage): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('deal');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.setDealStage(client, id, stage);
+        await refresh();
+        setLastMessage('Deal stage updated by you.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
   const status: CloudStatus = !isCloudConfigured
     ? 'unconfigured'
     : !session
@@ -586,6 +795,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       discoveryRuns,
       outreach,
       emailAccount,
+      contacts,
+      suppressedEmails,
+      quotes,
+      paymentIntents,
+      deals,
+      replies,
       lastError,
       lastMessage,
       busy,
@@ -604,6 +819,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       updateSettings,
       approveMessage,
       draftForLead,
+      createQuote,
+      sendQuote,
+      quoteLink,
+      recordPaymentDue,
+      setDealStage,
       clearNotice,
     }),
     [
@@ -618,6 +838,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       discoveryRuns,
       outreach,
       emailAccount,
+      contacts,
+      suppressedEmails,
+      quotes,
+      paymentIntents,
+      deals,
+      replies,
       lastError,
       lastMessage,
       busy,
@@ -636,6 +862,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       updateSettings,
       approveMessage,
       draftForLead,
+      createQuote,
+      sendQuote,
+      quoteLink,
+      recordPaymentDue,
+      setDealStage,
       clearNotice,
     ],
   );
