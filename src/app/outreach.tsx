@@ -187,8 +187,9 @@ export default function OutreachScreen() {
    * contact, applies the same opt-out and suppression rules, and already
    * excludes leads with an open draft.
    */
-  const readyLeads = cloud.readyLeads.filter((lead) => lead.contact_email !== null);
-  const leadsWithoutContact = cloud.readyLeads.filter((lead) => lead.contact_email === null).length;
+  const readyLeads = cloud.readyLeads;
+  const leadsWithoutContact = cloud.readyStats.withoutContact;
+  const totalReady = cloud.readyStats.ready;
 
   const drafts = cloud.outreach.filter((message) => message.status === 'draft');
   const approved = cloud.outreach.filter((message) => message.status === 'approved');
@@ -343,15 +344,16 @@ export default function OutreachScreen() {
       </FadeInView>
 
       <FadeInView delay={120} style={{ marginTop: spacing.xxl }}>
-        <SectionHeader label={`Ready to draft · ${readyLeads.length}`} />
+        <SectionHeader label={`Ready to draft · ${readyLeads.length} of ${totalReady}`} />
         <Panel padded={false}>
           {readyLeads.length === 0 ? (
             <View style={{ padding: spacing.lg }}>
               <AppText variant="caption">
                 No lead with a usable contact is waiting. A ready lead needs a stored public address
                 that has not opted out or been suppressed, and no open draft. The database checks
-                every contact on file, not only the ones loaded on this phone. New leads appear
-                here after discovery scores them.
+                every contact on file, not only the ones loaded on this phone.                 New leads appear
+                here after discovery scores them. The list is paged, so a lead is never hidden just
+                because it scored lower.
                 {leadsWithoutContact > 0
                   ? ` ${leadsWithoutContact} scored lead(s) are hidden because no usable contact is on file.`
                   : ''}
@@ -404,6 +406,20 @@ export default function OutreachScreen() {
               </View>
             ))
           )}
+
+          {readyLeads.length > 0 && readyLeads.length < totalReady ? (
+            <View style={{ padding: spacing.lg, paddingTop: spacing.sm }}>
+              <NeonButton
+                label={`Show ${Math.min(100, totalReady - readyLeads.length)} more of ${
+                  totalReady - readyLeads.length
+                } remaining`}
+                icon="chevron-down-outline"
+                variant="ghost"
+                onPress={() => void cloud.loadMoreReadyLeads()}
+                loading={cloud.readyLoading}
+              />
+            </View>
+          ) : null}
         </Panel>
       </FadeInView>
 

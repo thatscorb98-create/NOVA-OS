@@ -360,22 +360,50 @@ export async function enqueueDraft(
   return job?.id ?? null;
 }
 
+export interface ReadyLeadPage {
+  leads: CloudReadyLead[];
+  total: number;
+}
+
 /**
- * Leads that can be drafted now, decided by the database.
+ * One page of leads that can be drafted now, decided by the database.
  *
- * This deliberately does not read a page of `contacts`: that page is capped, so
- * a usable address created after the cap was invisible and its lead stayed
- * hidden. The function looks at every contact the owner has, applies the same
- * opt-out/suppression rules, and returns one address per lead (or none).
+ * `total` is the size of the whole matching set, so the screen can say that more
+ * exist and page through them instead of stopping at the first page.
  */
 export async function loadReadyLeads(
   client: SupabaseClient,
-  limit = 200,
-): Promise<CloudReadyLead[]> {
-  const { data, error } = await client.rpc('ready_to_draft_leads', { p_limit: limit });
+  limit = 100,
+  offset = 0,
+): Promise<ReadyLeadPage> {
+  const { data, error } = await client.rpc('ready_to_draft_leads', {
+    p_limit: limit,
+    p_offset: offset,
+  });
 
   if (error) throw new Error(describeCloudError(error));
-  return (data ?? []) as CloudReadyLead[];
+
+  const rows = (data ?? []) as (CloudReadyLead & { total_count: number | string })[];
+  const total = rows.length > 0 ? Number(rows[0].total_count) : offset;
+
+  return { leads: rows, total: Number.isFinite(total) ? total : rows.length };
+}
+
+/** How many leads are ready, and how many are waiting on a usable address. */
+export async function loadReadyStats(
+  client: SupabaseClient,
+): Promise<{ ready: number; withoutContact: number }> {
+  const { data, error } = await client.rpc('ready_to_draft_stats');
+  if (error) throw new Error(describeCloudError(error));
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { ready?: number | string; without_contact?: number | string }
+    | null;
+
+  return {
+    ready: Number(row?.ready ?? 0),
+    withoutContact: Number(row?.without_contact ?? 0),
+  };
 }
 
 /* -------------------------------------------------------------- Phase 4 */

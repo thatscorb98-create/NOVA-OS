@@ -261,8 +261,11 @@ intent is shown as a hint, not a claim about what the customer meant.
 The **Ready to draft** list is decided by the database (`ready_to_draft_leads`),
 not by a page of contacts loaded on the phone. It looks at every contact the
 owner has, applies the opt-out and suppression rules, skips leads with an open
-draft, and returns one address per lead. Leads without a usable address are
-counted separately so the screen can say how many are waiting on one.
+draft, and returns one address per lead, 100 at a time with a `total_count` for
+the whole set. The screen shows "_n_ of _total_" and a button that loads the next
+page, so a lower-scored lead is never hidden without saying so.
+`ready_to_draft_stats` reports how many are ready and how many are waiting on a
+usable address, without loading either list.
 
 ### Delivery (Phase 6)
 

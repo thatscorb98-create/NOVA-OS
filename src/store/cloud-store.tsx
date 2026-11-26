@@ -78,6 +78,9 @@ interface CloudContextValue {
   outreach: CloudOutreachMessage[];
   emailAccount: CloudEmailAccount | null;
   readyLeads: CloudReadyLead[];
+  readyTotal: number;
+  readyStats: { ready: number; withoutContact: number };
+  readyLoading: boolean;
   deliverables: CloudDeliverable[];
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
@@ -87,6 +90,7 @@ interface CloudContextValue {
   lastMessage: string | null;
   busy: BusyKey;
   refresh: () => Promise<void>;
+  loadMoreReadyLeads: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<CloudResult>;
   signUp: (email: string, password: string) => Promise<CloudResult>;
   signOut: () => Promise<void>;
@@ -148,6 +152,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [outreach, setOutreach] = useState<CloudOutreachMessage[]>([]);
   const [emailAccount, setEmailAccount] = useState<CloudEmailAccount | null>(null);
   const [readyLeads, setReadyLeads] = useState<CloudReadyLead[]>([]);
+  const [readyTotal, setReadyTotal] = useState(0);
+  const [readyStats, setReadyStats] = useState({ ready: 0, withoutContact: 0 });
+  const [readyLoading, setReadyLoading] = useState(false);
   const [deliverables, setDeliverables] = useState<CloudDeliverable[]>([]);
   const [quotes, setQuotes] = useState<CloudQuote[]>([]);
   const [paymentIntents, setPaymentIntents] = useState<CloudPaymentIntent[]>([]);
@@ -216,7 +223,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextRuns,
         nextOutreach,
         nextAccount,
-        nextReadyLeads,
+        nextReadyPage,
+        nextReadyStats,
         nextDeliverables,
         nextQuotes,
         nextIntents,
@@ -231,7 +239,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDiscoveryRuns(client),
         cloudApi.loadOutreachMessages(client),
         cloudApi.loadEmailAccount(client),
-        cloudApi.loadReadyLeads(client),
+        cloudApi.loadReadyLeads(client, 100, 0),
+        cloudApi.loadReadyStats(client),
         cloudApi.loadDeliverables(client),
         cloudApi.loadQuotes(client),
         cloudApi.loadPaymentIntents(client),
@@ -247,7 +256,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns(nextRuns);
       setOutreach(nextOutreach);
       setEmailAccount(nextAccount);
-      setReadyLeads(nextReadyLeads);
+      setReadyLeads(nextReadyPage.leads);
+      setReadyTotal(nextReadyPage.total);
+      setReadyStats(nextReadyStats);
       setDeliverables(nextDeliverables);
       setQuotes(nextQuotes);
       setPaymentIntents(nextIntents);
@@ -903,6 +914,27 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const loadMoreReadyLeads = useCallback(async () => {
+    const client = getSupabase();
+    if (!client || readyLoading) return;
+
+    setReadyLoading(true);
+    setLastError(null);
+
+    try {
+      const page = await cloudApi.loadReadyLeads(client, 100, readyLeads.length);
+      setReadyLeads((previous) => {
+        const seen = new Set(previous.map((lead) => lead.id));
+        return [...previous, ...page.leads.filter((lead) => !seen.has(lead.id))];
+      });
+      setReadyTotal(page.total);
+    } catch (error) {
+      setLastError(cloudApi.describeCloudError(error));
+    } finally {
+      setReadyLoading(false);
+    }
+  }, [readyLeads.length, readyLoading]);
+
   const status: CloudStatus = !isCloudConfigured
     ? 'unconfigured'
     : !session
@@ -928,6 +960,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       outreach,
       emailAccount,
       readyLeads,
+      readyTotal,
+      readyStats,
+      readyLoading,
       deliverables,
       quotes,
       paymentIntents,
@@ -937,6 +972,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       lastMessage,
       busy,
       refresh,
+      loadMoreReadyLeads,
       signIn,
       signUp,
       signOut,
@@ -976,6 +1012,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       outreach,
       emailAccount,
       readyLeads,
+      readyTotal,
+      readyStats,
+      readyLoading,
       deliverables,
       quotes,
       paymentIntents,
@@ -985,6 +1024,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       lastMessage,
       busy,
       refresh,
+      loadMoreReadyLeads,
       signIn,
       signUp,
       signOut,

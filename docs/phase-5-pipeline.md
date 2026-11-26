@@ -48,11 +48,16 @@ now does the work in one query over every contact the owner has:
 - at least one contact has an address containing `@`, is not opted out and is not
   on the suppression list (the oldest usable contact wins)
 - no `draft`, `approved` or `sending` message already exists for that lead
-- leads without a usable address are still returned, with a null contact, so the
-  app can count them
 
-The app calls it through `loadReadyLeads`, so the capped contact list is no
-longer involved in the decision.
+The function returns only leads that have a usable address, ordered by score,
+with `p_limit`/`p_offset` paging and a `total_count` over the whole matching set.
+A companion `ready_to_draft_stats()` returns two counts — ready, and waiting on a
+usable address — so the screen can say how many exist without loading them.
+
+The app calls it through `loadReadyLeads`, keeps the first 100, shows "_n_ of
+_total_" and loads the next page on demand. The capped contact list is no longer
+involved in the decision, and no lower-scored lead is hidden once the set grows
+past one page.
 
 ## What is not built
 
