@@ -27,6 +27,23 @@ the app labels it that way. No model call is made and no reply is drafted.
 the owner's own **Mark won** and **Mark lost**. Nothing advances because time
 passed, and no deal is created by hand.
 
+## Ready to draft is a database decision
+
+The outreach screen used to decide which leads could be drafted from a page of
+300 contacts ordered oldest-first. A usable address created after that window was
+invisible, so its lead never appeared. `public.ready_to_draft_leads(p_limit)`
+now does the work in one query over every contact the owner has:
+
+- the lead is `qualified` or `researched`
+- at least one contact has an address containing `@`, is not opted out and is not
+  on the suppression list (the oldest usable contact wins)
+- no `draft`, `approved` or `sending` message already exists for that lead
+- leads without a usable address are still returned, with a null contact, so the
+  app can count them
+
+The app calls it through `loadReadyLeads`, so the capped contact list is no
+longer involved in the decision.
+
 ## What the SQL suite asserts
 
 - only the service role can record a provider event
@@ -43,4 +60,5 @@ passed, and no deal is created by hand.
   mailbox, and AgentMail's inbound payload has not been verified against a live
   key.
 - No automatic replies, follow-up sequencing or reply drafting.
-- No production or delivery tracking.
+- No production automation. Delivery tracking is Phase 6
+  ([`phase-6-production.md`](phase-6-production.md)).

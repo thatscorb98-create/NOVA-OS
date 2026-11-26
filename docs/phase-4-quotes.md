@@ -53,8 +53,8 @@ that reference for `succeeded`.
 - No payment provider integration. `provider` is `none`; there is no Stripe client
   and no charge call anywhere in the codebase. With `STRIPE_SECRET_KEY` unset the
   intent handler records what is owed and says nothing can be collected.
-- No invoice PDF, no receipts, no refunds, no delivery. Those belong to the
-  production phase.
+- No invoice PDF, no receipts, no refunds. Delivery is tracked separately in
+  [`phase-6-production.md`](phase-6-production.md).
 - The acceptance page was exercised by the SQL function and inspected as code;
   it has not been served from a deployed project, because no Supabase project is
   configured for this repository yet.
