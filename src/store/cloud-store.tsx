@@ -15,8 +15,8 @@ import { isCloudConfigured, missingCloudVariables } from '@/lib/cloud/config';
 import type {
   AutonomyMode,
   CloudCatalogService,
-  CloudContact,
   CloudDeal,
+  CloudDeliverable,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -26,6 +26,7 @@ import type {
   CloudOutreachMessage,
   CloudPaymentIntent,
   CloudQuote,
+  CloudReadyLead,
   CloudReply,
   CloudResult,
   DealStage,
@@ -60,6 +61,7 @@ type BusyKey =
   | 'outreach'
   | 'quote'
   | 'deal'
+  | 'delivery'
   | null;
 
 interface CloudContextValue {
@@ -75,8 +77,8 @@ interface CloudContextValue {
   discoveryRuns: CloudDiscoveryRun[];
   outreach: CloudOutreachMessage[];
   emailAccount: CloudEmailAccount | null;
-  contacts: CloudContact[];
-  suppressedEmails: string[];
+  readyLeads: CloudReadyLead[];
+  deliverables: CloudDeliverable[];
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
   deals: CloudDeal[];
@@ -121,6 +123,11 @@ interface CloudContextValue {
   quoteLink: (id: string) => Promise<CloudResult>;
   recordPaymentDue: (quoteId: string) => Promise<CloudResult>;
   setDealStage: (id: string, stage: DealStage) => Promise<CloudResult>;
+  openDelivery: (quoteId: string) => Promise<CloudResult>;
+  startDeliverable: (id: string) => Promise<CloudResult>;
+  deliverWork: (id: string, artifactUrl: string) => Promise<CloudResult>;
+  acceptWork: (id: string) => Promise<CloudResult>;
+  requestRevision: (id: string, note: string) => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -140,8 +147,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [discoveryRuns, setDiscoveryRuns] = useState<CloudDiscoveryRun[]>([]);
   const [outreach, setOutreach] = useState<CloudOutreachMessage[]>([]);
   const [emailAccount, setEmailAccount] = useState<CloudEmailAccount | null>(null);
-  const [contacts, setContacts] = useState<CloudContact[]>([]);
-  const [suppressedEmails, setSuppressedEmails] = useState<string[]>([]);
+  const [readyLeads, setReadyLeads] = useState<CloudReadyLead[]>([]);
+  const [deliverables, setDeliverables] = useState<CloudDeliverable[]>([]);
   const [quotes, setQuotes] = useState<CloudQuote[]>([]);
   const [paymentIntents, setPaymentIntents] = useState<CloudPaymentIntent[]>([]);
   const [deals, setDeals] = useState<CloudDeal[]>([]);
@@ -189,8 +196,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns([]);
       setOutreach([]);
       setEmailAccount(null);
-      setContacts([]);
-      setSuppressedEmails([]);
+      setReadyLeads([]);
+      setDeliverables([]);
       setQuotes([]);
       setPaymentIntents([]);
       setDeals([]);
@@ -209,8 +216,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextRuns,
         nextOutreach,
         nextAccount,
-        nextContacts,
-        nextSuppressed,
+        nextReadyLeads,
+        nextDeliverables,
         nextQuotes,
         nextIntents,
         nextDeals,
@@ -224,8 +231,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDiscoveryRuns(client),
         cloudApi.loadOutreachMessages(client),
         cloudApi.loadEmailAccount(client),
-        cloudApi.loadContacts(client),
-        cloudApi.loadSuppressedEmails(client),
+        cloudApi.loadReadyLeads(client),
+        cloudApi.loadDeliverables(client),
         cloudApi.loadQuotes(client),
         cloudApi.loadPaymentIntents(client),
         cloudApi.loadDeals(client),
@@ -240,8 +247,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns(nextRuns);
       setOutreach(nextOutreach);
       setEmailAccount(nextAccount);
-      setContacts(nextContacts);
-      setSuppressedEmails(nextSuppressed);
+      setReadyLeads(nextReadyLeads);
+      setDeliverables(nextDeliverables);
       setQuotes(nextQuotes);
       setPaymentIntents(nextIntents);
       setDeals(nextDeals);
@@ -264,8 +271,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryRuns([]);
       setOutreach([]);
       setEmailAccount(null);
-      setContacts([]);
-      setSuppressedEmails([]);
+      setReadyLeads([]);
+      setDeliverables([]);
       setQuotes([]);
       setPaymentIntents([]);
       setDeals([]);
@@ -321,8 +328,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     setDiscoveryRuns([]);
     setOutreach([]);
     setEmailAccount(null);
-    setContacts([]);
-    setSuppressedEmails([]);
+    setReadyLeads([]);
+    setDeliverables([]);
     setQuotes([]);
     setPaymentIntents([]);
     setDeals([]);
@@ -771,6 +778,131 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const openDelivery = useCallback(
+    async (quoteId: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.openDelivery(client, quoteId);
+        await refresh();
+        setLastMessage('Delivery opened from the accepted quote. The due date comes from its delivery days.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const startDeliverable = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.startDeliverable(client, id);
+        await refresh();
+        setLastMessage('Work marked in progress.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const deliverWork = useCallback(
+    async (id: string, artifactUrl: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.markDeliverableDelivered(client, id, artifactUrl);
+        await refresh();
+        setLastMessage('Delivery recorded with its link.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const acceptWork = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.acceptDeliverable(client, id);
+        await refresh();
+        setLastMessage('Delivery accepted. The deal is marked won.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const requestRevision = useCallback(
+    async (id: string, note: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.requestDeliverableRevision(client, id, note);
+        await refresh();
+        setLastMessage('Revision requested, within the included allowance.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
   const status: CloudStatus = !isCloudConfigured
     ? 'unconfigured'
     : !session
@@ -795,8 +927,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       discoveryRuns,
       outreach,
       emailAccount,
-      contacts,
-      suppressedEmails,
+      readyLeads,
+      deliverables,
       quotes,
       paymentIntents,
       deals,
@@ -824,6 +956,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       quoteLink,
       recordPaymentDue,
       setDealStage,
+      openDelivery,
+      startDeliverable,
+      deliverWork,
+      acceptWork,
+      requestRevision,
       clearNotice,
     }),
     [
@@ -838,8 +975,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       discoveryRuns,
       outreach,
       emailAccount,
-      contacts,
-      suppressedEmails,
+      readyLeads,
+      deliverables,
       quotes,
       paymentIntents,
       deals,
@@ -867,6 +1004,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       quoteLink,
       recordPaymentDue,
       setDealStage,
+      openDelivery,
+      startDeliverable,
+      deliverWork,
+      acceptWork,
+      requestRevision,
       clearNotice,
     ],
   );

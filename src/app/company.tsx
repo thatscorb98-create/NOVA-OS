@@ -264,6 +264,25 @@ export default function CompanyScreen() {
               />
             </View>
           </View>
+
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Quotes"
+                icon="document-text-outline"
+                variant="ghost"
+                onPress={() => router.push('/quotes')}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Pipeline"
+                icon="git-branch-outline"
+                variant="ghost"
+                onPress={() => router.push('/pipeline')}
+              />
+            </View>
+          </View>
         </Panel>
       </FadeInView>
 

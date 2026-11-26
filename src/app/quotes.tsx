@@ -596,6 +596,17 @@ export default function QuotesScreen() {
             />
           </View>
         </View>
+
+        <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
+          <View style={{ flex: 1 }}>
+            <NeonButton
+              label="Delivery"
+              icon="cube-outline"
+              variant="ghost"
+              onPress={() => router.push('/delivery')}
+            />
+          </View>
+        </View>
       </FadeInView>
     </Screen>
   );

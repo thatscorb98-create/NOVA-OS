@@ -207,6 +207,17 @@ export interface CloudContact {
   opted_out: boolean;
 }
 
+/**
+ * A lead that can be drafted now, with the one address we would write to.
+ *
+ * Returned by `ready_to_draft_leads`, so the decision sees every contact the
+ * owner has instead of only the first page the app loaded.
+ */
+export interface CloudReadyLead extends CloudLead {
+  contact_id: string | null;
+  contact_email: string | null;
+}
+
 /* -------------------------------------------------------------- Phase 4 */
 
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'expired';
@@ -323,6 +334,44 @@ export const DEAL_STAGE_LABEL: Record<DealStage, string> = {
   won: 'WON',
   lost: 'LOST',
   do_not_contact: 'DO NOT CONTACT',
+};
+
+/* -------------------------------------------------------------- Phase 6 */
+
+export type DeliverableStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'delivered'
+  | 'accepted'
+  | 'revision_requested'
+  | 'cancelled';
+
+export interface CloudDeliverable {
+  id: string;
+  quote_id: string;
+  deal_id: string | null;
+  lead_id: string | null;
+  title: string;
+  scope: string;
+  status: DeliverableStatus;
+  due_at: string | null;
+  started_at: string | null;
+  delivered_at: string | null;
+  accepted_at: string | null;
+  revisions_included: number;
+  revisions_used: number;
+  artifact_url: string | null;
+  revision_note: string | null;
+  created_at: string;
+}
+
+export const DELIVERABLE_STATUS_LABEL: Record<DeliverableStatus, string> = {
+  pending: 'NOT STARTED',
+  in_progress: 'IN PROGRESS',
+  delivered: 'DELIVERED',
+  accepted: 'ACCEPTED',
+  revision_requested: 'REVISION ASKED',
+  cancelled: 'CANCELLED',
 };
 
 export const AUTONOMY_MODES: { key: AutonomyMode; label: string; note: string }[] = [

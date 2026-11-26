@@ -27,6 +27,16 @@ the app labels it that way. No model call is made and no reply is drafted.
 the owner's own **Mark won** and **Mark lost**. Nothing advances because time
 passed, and no deal is created by hand.
 
+## What the SQL suite asserts
+
+- only the service role can record a provider event
+- an unknown message id is refused
+- a reply marks the message `replied` and the deal `replied`
+- "not interested" closes the deal as `lost`
+- "please remove me" suppresses the address, cancels other open drafts to it and
+  moves the deal to `do_not_contact`
+- an owner cannot read another owner's replies
+
 ## Ready to draft is a database decision
 
 The outreach screen used to decide which leads could be drafted from a page of
@@ -43,16 +53,6 @@ now does the work in one query over every contact the owner has:
 
 The app calls it through `loadReadyLeads`, so the capped contact list is no
 longer involved in the decision.
-
-## What the SQL suite asserts
-
-- only the service role can record a provider event
-- an unknown message id is refused
-- a reply marks the message `replied` and the deal `replied`
-- "not interested" closes the deal as `lost`
-- "please remove me" suppresses the address, cancels other open drafts to it and
-  moves the deal to `do_not_contact`
-- an owner cannot read another owner's replies
 
 ## What is not built
 

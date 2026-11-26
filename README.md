@@ -6,6 +6,8 @@ NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (rese
 
 > **Current status: Phase Four — mission execution.**
 > Give NOVA a goal and it plans the work, delegates each task to a specialist, reviews what comes back, retries failures and writes a final report. Runs are gated by approvals and hard budgets, and memory from previous missions is recalled into every prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
+>
+> **Cloud foundation:** discovery, outreach, quotes, payment records, the reply pipeline and delivery tracking are built and checked against a local Postgres. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered.
 
 ---
 
@@ -107,7 +109,9 @@ The call budget is persisted on the mission and incremented before every request
 - Parallel task execution: planned tasks run one at a time to keep costs and rate limits predictable.
 - Automatic replanning when a whole plan fails; you retry or start a new mission instead.
 - Multi-device memory sync. Phase 1 adds optional owner accounts and a cloud queue, but the local ledger is not mirrored automatically.
-- Live email, payments and production. Those are later phases and every one of them ships off by default.
+- Live email and payments. Both have their backend and screens, but they ship switched off, no provider key is configured, and nothing has been sent or charged. Payment records say what is owed; there is no charge call in the codebase.
+- Automatic production. Delivery tracking records the work and the link to it, but no tool generates the deliverable and nothing is sent to a customer automatically.
+- Inbox sync. Replies are only recorded when the email provider POSTs to the webhook; the app does not poll a mailbox.
 - Memory export/import.
 
 ## Run it
@@ -227,6 +231,50 @@ The app still works entirely on the phone with no account. Connecting a Supabase
 - `src/app/cloud.tsx` — the control surface: sign in, health, queue, worker controls, company mode.
 
 Setup steps, what is enforced, and known limits are in [`docs/phase-1-cloud-foundation.md`](docs/phase-1-cloud-foundation.md).
+
+Later cloud phases, each with its own evidence and limits:
+
+- [`docs/phase-2-and-3.md`](docs/phase-2-and-3.md) — discovery, scoring, outreach drafts and the send gates.
+- [`docs/phase-4-quotes.md`](docs/phase-4-quotes.md) — quotes, signed acceptance links and payment records.
+- [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
+- [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
+
+### Quotes, acceptance and payment records (Phase 4)
+
+The owner writes a quote and the amount; NOVA never guesses a price. `send_quote`
+releases it, and the acceptance link carries an HMAC over the quote id and an
+expiry, signed server-side with `QUOTE_LINK_SECRET` (falling back to
+`WORKER_SECRET`). `accept_quote` is service-role only and requires a sent,
+unexpired quote. Only after that can `create_payment_intent` record an amount
+owed — and only when payments are switched live. A record starts as
+`requires_payment`; `succeeded` is refused without a provider reference. There
+is no charge call in the codebase.
+
+### Replies, suppression and the pipeline (Phase 5)
+
+Provider webhooks land in `record_email_event`, which resolves the message from
+our own row, appends the event, attaches a deterministic keyword intent and
+suppresses the address on an opt-out, bounce or complaint. A reply moves the
+message and the deal, and an opt-out closes the deal as `do_not_contact`. The
+intent is shown as a hint, not a claim about what the customer meant.
+
+The **Ready to draft** list is decided by the database (`ready_to_draft_leads`),
+not by a page of contacts loaded on the phone. It looks at every contact the
+owner has, applies the opt-out and suppression rules, skips leads with an open
+draft, and returns one address per lead. Leads without a usable address are
+counted separately so the screen can say how many are waiting on one.
+
+### Delivery (Phase 6)
+
+An accepted quote can be opened as a delivery, with a due date taken from its
+delivery days and the revision allowance from the service. Marking work
+delivered requires an `http(s)` link to the actual artifact; acceptance is the
+owner's own action and marks the deal `won`; revision requests are bounded by
+the included allowance. When payments are live, delivery cannot start until a
+succeeded payment record exists. The app can read deliverables but every
+transition goes through a database function.
+
+`.github/workflows/supabase-deploy.yml` deploys **every** directory under `supabase/functions` that has an `index.ts`; `_shared` is imported, not deployed on its own. The list is discovered at run time, so a new function is never left out of a deployment.
 
 Only the public anon key reaches the app. The service-role key is read by the edge functions from Supabase secrets and never appears in the bundle, the repository or a log.
 

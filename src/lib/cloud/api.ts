@@ -4,8 +4,8 @@ import type { MemoryRecord } from '@/types/nova';
 import type {
   AutonomyMode,
   CloudCatalogService,
-  CloudContact,
   CloudDeal,
+  CloudDeliverable,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -15,6 +15,7 @@ import type {
   CloudOutreachMessage,
   CloudPaymentIntent,
   CloudQuote,
+  CloudReadyLead,
   CloudReply,
   CloudResult,
   DealStage,
@@ -359,27 +360,22 @@ export async function enqueueDraft(
   return job?.id ?? null;
 }
 
-/** Contacts are evidence: a public address the pipeline actually found. */
-export async function loadContacts(client: SupabaseClient, limit = 300): Promise<CloudContact[]> {
-  const { data, error } = await client
-    .from('contacts')
-    .select('id, lead_id, name, email, email_normalized, verified, opted_out')
-    .order('created_at', { ascending: true })
-    .limit(limit);
+/**
+ * Leads that can be drafted now, decided by the database.
+ *
+ * This deliberately does not read a page of `contacts`: that page is capped, so
+ * a usable address created after the cap was invisible and its lead stayed
+ * hidden. The function looks at every contact the owner has, applies the same
+ * opt-out/suppression rules, and returns one address per lead (or none).
+ */
+export async function loadReadyLeads(
+  client: SupabaseClient,
+  limit = 200,
+): Promise<CloudReadyLead[]> {
+  const { data, error } = await client.rpc('ready_to_draft_leads', { p_limit: limit });
 
   if (error) throw new Error(describeCloudError(error));
-  return (data ?? []) as CloudContact[];
-}
-
-/** Normalized addresses the owner has suppressed. Nothing may be sent to them. */
-export async function loadSuppressedEmails(client: SupabaseClient): Promise<string[]> {
-  const { data, error } = await client
-    .from('suppression_list')
-    .select('email_normalized')
-    .limit(500);
-
-  if (error) throw new Error(describeCloudError(error));
-  return ((data ?? []) as { email_normalized: string }[]).map((row) => row.email_normalized);
+  return (data ?? []) as CloudReadyLead[];
 }
 
 /* -------------------------------------------------------------- Phase 4 */
@@ -535,5 +531,61 @@ export async function setDealStage(
     .eq('id', id)
     .eq('owner_id', ownerId);
 
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/* -------------------------------------------------------------- Phase 6 */
+
+export async function loadDeliverables(
+  client: SupabaseClient,
+  limit = 40,
+): Promise<CloudDeliverable[]> {
+  const { data, error } = await client
+    .from('deliverables')
+    .select(
+      'id, quote_id, deal_id, lead_id, title, scope, status, due_at, started_at, delivered_at, accepted_at, revisions_included, revisions_used, artifact_url, revision_note, created_at',
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudDeliverable[];
+}
+
+/** An accepted quote becomes tracked work. The database refuses anything else. */
+export async function openDelivery(client: SupabaseClient, quoteId: string): Promise<void> {
+  const { error } = await client.rpc('open_delivery', { p_quote_id: quoteId });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+export async function startDeliverable(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.rpc('start_deliverable', { p_id: id });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/** The URL is the evidence; the database rejects a delivery without one. */
+export async function markDeliverableDelivered(
+  client: SupabaseClient,
+  id: string,
+  artifactUrl: string,
+): Promise<void> {
+  const { error } = await client.rpc('mark_deliverable_delivered', {
+    p_id: id,
+    p_artifact_url: artifactUrl,
+  });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+export async function acceptDeliverable(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.rpc('accept_deliverable', { p_id: id });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+export async function requestDeliverableRevision(
+  client: SupabaseClient,
+  id: string,
+  note: string,
+): Promise<void> {
+  const { error } = await client.rpc('request_deliverable_revision', { p_id: id, p_note: note });
   if (error) throw new Error(describeCloudError(error));
 }
