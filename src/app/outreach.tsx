@@ -180,6 +180,21 @@ export default function OutreachScreen() {
     return cloud.leads.find((lead) => lead.id === id)?.business_name ?? null;
   };
 
+  const suppressed = new Set(cloud.suppressedEmails.map((email) => email.toLowerCase()));
+
+  /**
+   * A lead is only draftable when there is a real address to write to: a stored
+   * contact that has not opted out and is not on the suppression list. The
+   * worker re-checks all of this, so this filter only hides dead ends.
+   */
+  const usableContact = (leadId: string) =>
+    cloud.contacts.find((contact) => {
+      if (contact.lead_id !== leadId || contact.opted_out) return false;
+      const address = (contact.email_normalized ?? contact.email ?? '').toLowerCase().trim();
+      if (!address.includes('@') || address.length < 4) return false;
+      return !suppressed.has(address);
+    }) ?? null;
+
   const drafts = cloud.outreach.filter((message) => message.status === 'draft');
   const approved = cloud.outreach.filter((message) => message.status === 'approved');
   const history = cloud.outreach.filter((message) => !OPEN_STATUSES.includes(message.status));
@@ -187,10 +202,17 @@ export default function OutreachScreen() {
   const readyLeads = cloud.leads.filter(
     (lead) =>
       (lead.status === 'qualified' || lead.status === 'researched') &&
+      usableContact(lead.id) !== null &&
       !cloud.outreach.some(
         (message) => message.lead_id === lead.id && OPEN_STATUSES.includes(message.status),
       ),
   );
+
+  const leadsWithoutContact = cloud.leads.filter(
+    (lead) =>
+      (lead.status === 'qualified' || lead.status === 'researched') &&
+      usableContact(lead.id) === null,
+  ).length;
 
   const approve = async (id: string) => {
     setApprovingId(id);
@@ -264,6 +286,25 @@ export default function OutreachScreen() {
               />
             </View>
           </View>
+
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Quotes"
+                icon="document-text-outline"
+                variant="ghost"
+                onPress={() => router.push('/quotes')}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Pipeline"
+                icon="git-branch-outline"
+                variant="ghost"
+                onPress={() => router.push('/pipeline')}
+              />
+            </View>
+          </View>
         </Panel>
       </FadeInView>
 
@@ -327,8 +368,12 @@ export default function OutreachScreen() {
           {readyLeads.length === 0 ? (
             <View style={{ padding: spacing.lg }}>
               <AppText variant="caption">
-                Every researched or qualified lead already has a draft. New leads appear here after
-                discovery scores them.
+                No lead with a usable contact is waiting. A ready lead needs a stored public address
+                that has not opted out or been suppressed, and no open draft. New leads appear here
+                after discovery scores them.
+                {leadsWithoutContact > 0
+                  ? ` ${leadsWithoutContact} scored lead(s) are hidden because no usable contact is on file.`
+                  : ''}
               </AppText>
             </View>
           ) : (
@@ -353,6 +398,9 @@ export default function OutreachScreen() {
                 </View>
                 <AppText variant="micro" numberOfLines={1} style={{ letterSpacing: 0.4 }}>
                   {lead.domain ?? 'no website'} · {lead.status.toUpperCase()}
+                </AppText>
+                <AppText variant="micro" numberOfLines={1} style={{ letterSpacing: 0.4, color: colors.textDim }}>
+                  {`TO ${usableContact(lead.id)?.email_normalized ?? usableContact(lead.id)?.email}`}
                 </AppText>
                 <Pressable
                   onPress={() => void cloud.draftForLead(lead.id)}

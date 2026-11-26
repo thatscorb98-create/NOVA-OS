@@ -70,6 +70,8 @@ export default function RootLayout() {
               <Stack.Screen name="cloud" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="company" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="outreach" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="quotes" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="pipeline" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen
                 name="core"
                 options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
