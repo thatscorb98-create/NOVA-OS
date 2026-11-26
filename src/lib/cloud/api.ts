@@ -4,6 +4,8 @@ import type { MemoryRecord } from '@/types/nova';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudContact,
+  CloudDeal,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -11,7 +13,11 @@ import type {
   CloudJob,
   CloudLead,
   CloudOutreachMessage,
+  CloudPaymentIntent,
+  CloudQuote,
+  CloudReply,
   CloudResult,
+  DealStage,
 } from '@/lib/cloud/types';
 
 /**
@@ -260,6 +266,7 @@ export async function updateCompanySettings(
     discovery_enabled: boolean;
     email_enabled: boolean;
     production_enabled: boolean;
+    payments_live: boolean;
     daily_lead_cap: number;
     score_threshold: number;
     industries: string[];
@@ -350,4 +357,183 @@ export async function enqueueDraft(
 
   const job = data as { id?: string } | null;
   return job?.id ?? null;
+}
+
+/** Contacts are evidence: a public address the pipeline actually found. */
+export async function loadContacts(client: SupabaseClient, limit = 300): Promise<CloudContact[]> {
+  const { data, error } = await client
+    .from('contacts')
+    .select('id, lead_id, name, email, email_normalized, verified, opted_out')
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudContact[];
+}
+
+/** Normalized addresses the owner has suppressed. Nothing may be sent to them. */
+export async function loadSuppressedEmails(client: SupabaseClient): Promise<string[]> {
+  const { data, error } = await client
+    .from('suppression_list')
+    .select('email_normalized')
+    .limit(500);
+
+  if (error) throw new Error(describeCloudError(error));
+  return ((data ?? []) as { email_normalized: string }[]).map((row) => row.email_normalized);
+}
+
+/* -------------------------------------------------------------- Phase 4 */
+
+export async function loadQuotes(client: SupabaseClient, limit = 40): Promise<CloudQuote[]> {
+  const { data, error } = await client
+    .from('quotes')
+    .select(
+      'id, lead_id, deal_id, service_key, title, scope, amount_cents, currency, status, delivery_days, expires_at, sent_at, accepted_at, accepted_via, created_at',
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudQuote[];
+}
+
+/**
+ * Create a draft quote. The owner writes the amount; nothing here guesses one.
+ * The row is created as a draft, and only send_quote can release it.
+ */
+export async function createQuote(
+  client: SupabaseClient,
+  input: {
+    leadId: string;
+    title: string;
+    scope: string;
+    amountCents: number;
+    deliveryDays: number;
+    expiresInDays: number;
+  },
+): Promise<string> {
+  const ownerId = await currentOwnerId(client);
+
+  const expiresAt = new Date(
+    Date.now() + Math.max(1, Math.min(60, input.expiresInDays)) * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const { data, error } = await client
+    .from('quotes')
+    .insert({
+      owner_id: ownerId,
+      lead_id: input.leadId,
+      title: input.title.trim().slice(0, 160),
+      scope: input.scope.trim().slice(0, 2000),
+      amount_cents: Math.max(1, Math.round(input.amountCents)),
+      delivery_days: Math.max(1, Math.min(90, Math.round(input.deliveryDays))),
+      expires_at: expiresAt,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const row = data as { id?: string } | null;
+  if (!row?.id) throw new Error('The quote was not stored.');
+  return row.id;
+}
+
+/** Release a draft quote. The database refuses an expired draft. */
+export async function sendQuote(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.rpc('send_quote', { p_quote_id: id });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/** Mint the signed acceptance link. The signature is made server-side only. */
+export async function mintQuoteLink(
+  client: SupabaseClient,
+  quoteId: string,
+): Promise<{ url: string; expiresAt: string }> {
+  const { data, error } = await client.functions.invoke('quote', {
+    body: { action: 'link', quoteId },
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const payload = data as { ok?: boolean; url?: string; expires_at?: string; error?: string } | null;
+  if (!payload?.ok || !payload.url) {
+    throw new Error(payload?.error ?? 'The link was not created.');
+  }
+
+  return { url: payload.url, expiresAt: payload.expires_at ?? '' };
+}
+
+export async function loadPaymentIntents(
+  client: SupabaseClient,
+  limit = 20,
+): Promise<CloudPaymentIntent[]> {
+  const { data, error } = await client
+    .from('payment_intents')
+    .select('id, quote_id, amount_cents, currency, provider, status, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudPaymentIntent[];
+}
+
+/** Queue the internal "amount owed" record for an accepted quote. Nothing charges. */
+export async function enqueuePaymentIntent(
+  client: SupabaseClient,
+  quoteId: string,
+): Promise<string | null> {
+  const { data, error } = await client.rpc('enqueue_agent_job', {
+    p_kind: 'relay.create_payment_intent',
+    p_payload: { quoteId },
+    p_idempotency_key: `intent:${quoteId}`,
+    p_priority: 160,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const job = data as { id?: string } | null;
+  return job?.id ?? null;
+}
+
+/* -------------------------------------------------------------- Phase 5 */
+
+export async function loadDeals(client: SupabaseClient, limit = 60): Promise<CloudDeal[]> {
+  const { data, error } = await client
+    .from('deals')
+    .select('id, lead_id, contact_id, stage, service_key, price_cents, currency, scope, next_action, updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudDeal[];
+}
+
+export async function loadReplies(client: SupabaseClient, limit = 20): Promise<CloudReply[]> {
+  const { data, error } = await client
+    .from('email_events')
+    .select('id, message_id, kind, intent, detail, created_at')
+    .in('kind', ['replied', 'unsubscribed', 'bounced', 'complained'])
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudReply[];
+}
+
+/** A manual stage change is the owner's own judgement, never an inferred outcome. */
+export async function setDealStage(
+  client: SupabaseClient,
+  id: string,
+  stage: DealStage,
+): Promise<void> {
+  const ownerId = await currentOwnerId(client);
+  const { error } = await client
+    .from('deals')
+    .update({ stage })
+    .eq('id', id)
+    .eq('owner_id', ownerId);
+
+  if (error) throw new Error(describeCloudError(error));
 }

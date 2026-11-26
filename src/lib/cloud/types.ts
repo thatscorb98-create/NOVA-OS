@@ -197,6 +197,134 @@ export const OUTREACH_STATUS_LABEL: Record<OutreachStatus, string> = {
   cancelled: 'CANCELLED',
 };
 
+export interface CloudContact {
+  id: string;
+  lead_id: string | null;
+  name: string | null;
+  email: string | null;
+  email_normalized: string | null;
+  verified: boolean;
+  opted_out: boolean;
+}
+
+/* -------------------------------------------------------------- Phase 4 */
+
+export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'expired';
+
+export interface CloudQuote {
+  id: string;
+  lead_id: string | null;
+  deal_id: string | null;
+  service_key: string | null;
+  title: string;
+  scope: string;
+  amount_cents: number;
+  currency: string;
+  status: QuoteStatus;
+  delivery_days: number;
+  expires_at: string | null;
+  sent_at: string | null;
+  accepted_at: string | null;
+  accepted_via: 'link' | 'email' | 'manual' | null;
+  created_at: string;
+}
+
+export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
+  draft: 'DRAFT',
+  sent: 'WAITING',
+  accepted: 'ACCEPTED',
+  declined: 'DECLINED',
+  expired: 'EXPIRED',
+};
+
+export type PaymentIntentStatus =
+  | 'requires_payment'
+  | 'pending'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface CloudPaymentIntent {
+  id: string;
+  quote_id: string;
+  amount_cents: number;
+  currency: string;
+  provider: 'none' | 'stripe';
+  status: PaymentIntentStatus;
+  created_at: string;
+}
+
+export const PAYMENT_STATUS_LABEL: Record<PaymentIntentStatus, string> = {
+  requires_payment: 'OWED',
+  pending: 'PENDING',
+  succeeded: 'PAID',
+  failed: 'FAILED',
+  cancelled: 'CANCELLED',
+};
+
+/* -------------------------------------------------------------- Phase 5 */
+
+export type DealStage =
+  | 'discovered'
+  | 'researched'
+  | 'qualified'
+  | 'contacted'
+  | 'replied'
+  | 'interested'
+  | 'offer_prepared'
+  | 'negotiating'
+  | 'ready_to_purchase'
+  | 'won'
+  | 'lost'
+  | 'do_not_contact';
+
+export interface CloudDeal {
+  id: string;
+  lead_id: string | null;
+  contact_id: string | null;
+  stage: DealStage;
+  service_key: string | null;
+  price_cents: number | null;
+  currency: string;
+  scope: string | null;
+  next_action: string | null;
+  updated_at: string;
+}
+
+export type ReplyIntent = 'interested' | 'question' | 'not_interested' | 'unsubscribe' | 'other';
+
+export interface CloudReply {
+  id: number;
+  message_id: string | null;
+  kind: string;
+  intent: ReplyIntent | null;
+  detail: string | null;
+  created_at: string;
+}
+
+export const REPLY_INTENT_LABEL: Record<ReplyIntent, string> = {
+  interested: 'INTERESTED',
+  question: 'QUESTION',
+  not_interested: 'NOT INTERESTED',
+  unsubscribe: 'OPTED OUT',
+  other: 'REPLY',
+};
+
+export const DEAL_STAGE_LABEL: Record<DealStage, string> = {
+  discovered: 'DISCOVERED',
+  researched: 'RESEARCHED',
+  qualified: 'QUALIFIED',
+  contacted: 'CONTACTED',
+  replied: 'REPLIED',
+  interested: 'INTERESTED',
+  offer_prepared: 'OFFER PREPARED',
+  negotiating: 'NEGOTIATING',
+  ready_to_purchase: 'READY TO BUY',
+  won: 'WON',
+  lost: 'LOST',
+  do_not_contact: 'DO NOT CONTACT',
+};
+
 export const AUTONOMY_MODES: { key: AutonomyMode; label: string; note: string }[] = [
   { key: 'paused', label: 'Paused', note: 'Nothing runs except recovery jobs.' },
   { key: 'intelligence', label: 'Intelligence', note: 'Discover, research, score and draft only.' },
