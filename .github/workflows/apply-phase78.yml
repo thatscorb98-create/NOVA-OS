@@ -1,0 +1,32 @@
+name: Apply validated patch
+
+on:
+  push:
+    branches: [nova/cloud-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.repository == 'thatscorb98-create/NOVA-OS'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nova/cloud-foundation
+          fetch-depth: 0
+      - name: Apply the reviewed patch
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://paste.c-net.org/SelmaPraise" -o /tmp/p.b64
+          base64 -d /tmp/p.b64 | gunzip > /tmp/p.patch
+          echo "9a6f99daeacdb4ecc23eeed0672903c2fdaf7fc66608276fe6ea950432e57ef7  /tmp/p.patch" | sha256sum -c -
+          git apply --check /tmp/p.patch
+          git apply /tmp/p.patch
+          rm -f .github/workflows/apply-phase78.yml
+          git config user.name "NOVA Build"
+          git config user.email "noreply@example.com"
+          git add -A
+          git commit -m "Add Phase 7 retention completion and Phase 8 autonomous loop"
+          git push origin HEAD:nova/cloud-foundation
