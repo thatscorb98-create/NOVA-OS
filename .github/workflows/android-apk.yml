@@ -165,7 +165,7 @@ jobs:
           set -euo pipefail
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/apksigner" verify --verbose --print-certs build-output/nova-os.apk
-          CERT=$("$BT/apksigner" verify --print-certs build-output/nova-os.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          CERT=$("$BT/apksigner" verify --print-certs build-output/nova-os.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr 'A-F' 'a-f')
           echo "Certificate SHA-256: $CERT"
           if [ -n "${EXPECTED_CERT:-}" ] && [ "$CERT" != "$EXPECTED_CERT" ]; then
             echo "::error::APK is signed with an unexpected certificate ($CERT), so it cannot upgrade an installed build."
