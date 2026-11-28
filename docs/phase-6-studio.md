@@ -124,8 +124,15 @@ The local Postgres suite applies every migration and now runs **68 assertions**
 
 ## Generator smoke test
 
-`test-production.ts` (run with Deno) generated every template and ran the same QA
-function the worker runs: all eight cases passed. It also fetched
+`supabase/tests/production_templates_test.ts` generated every template and ran the
+same QA function the worker runs: all eight cases passed. Run it from the repo
+root with:
+
+```bash
+deno run --allow-net=example.com supabase/tests/production_templates_test.ts
+```
+
+It also fetched
 `https://example.com` for a live audit (HTTP 200, title "Example Domain") and the
 result passed QA, including the PDF header/trailer check.
 
