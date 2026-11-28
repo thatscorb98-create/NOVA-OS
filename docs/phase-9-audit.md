@@ -50,7 +50,7 @@ Each check is recorded as:
 | `spending_cap` | Recorded AI spend does not exceed the owner budget. |
 | `live_gates` | Email, payments, live Stripe mode and automatic production are all off. |
 | `provider_config` | Search, email and Stripe test credentials are present. Missing ones make this `blocked`. |
-| `live_key_guard` | A live Stripe key is refused. With no Stripe key the guard cannot be exercised, so it is `blocked`, never `pass`. |
+| `live_key_guard` | A live Stripe key is refused, including a restricted live key (`rk_live_…`). With no Stripe key the guard cannot be exercised, so it is `blocked`, never `pass`. |
 
 The checks are intentionally read-only. They do not requeue stale jobs, retry a
 send, create a checkout or repair data; those actions stay owner-driven.
@@ -109,6 +109,8 @@ Automated, against the migrated local database:
   owner gets `permission denied`.
 - The Stripe webhook accepts a correct HMAC and rejects a wrong secret, a
   tampered body, a timestamp older than five minutes and a missing signature.
+- The live-key guard refuses both standard (`sk_live_…`) and restricted
+  (`rk_live_…`) live keys, while restricted test keys pass.
 - The audit report is owner-readable only; another owner sees zero rows.
 - Live gates default to off, and the audit reports any that are on as a
   failure.
@@ -134,9 +136,11 @@ available here.
 - Fresh local Postgres, all migrations: **132 assertions passed, 0 failed**
   (116 before Phase 9 + 16 Phase 9 checks).
 - `deno test supabase/tests/phase9_audit_test.ts supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts`:
-  **21 passed, 0 failed** (4 audit regressions, 11 policy, 6 webhook).
+  **23 passed, 0 failed** (6 audit regressions, 11 policy, 6 webhook).
 - Real `runQueue` and `audit.run` end to end against a fresh local Postgres:
-  **11 harness checks passed, 0 failed**, with the company paused.
+  **11 harness checks passed, 0 failed**, with the company paused. Both local
+  suites are checked in under `supabase/tests/local/` and start their own
+  throwaway Postgres when no server is configured.
 - `deno run --allow-net=example.com supabase/tests/production_templates_test.ts`:
   every template passed and the live example.com audit returned HTTP 200.
 - `npx tsc --noEmit`: 0.
@@ -167,9 +171,12 @@ available here.
 ## How to run
 
 ```bash
-# Full SQL suite (requires a local Postgres and the migration runner used by
-# this repository's development environment)
-node run.mjs
+# Full SQL suite and the paused-audit end-to-end harness. The harness starts
+# its own throwaway Postgres when none is configured and drops/recreates the
+# test databases on every run.
+cd supabase/tests/local
+npm install
+node run_all.mjs
 
 # Pure policy and webhook tests
 deno test supabase/tests/phase9_audit_test.ts supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts

@@ -2,6 +2,26 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.6.1] — 2026-11-28
+
+Seventh Android release (`versionCode` 7).
+
+### Added
+
+- **Rerunnable local verification.** The full Postgres migration suite and the
+  paused-audit end-to-end harness now live in `supabase/tests/local/`. The
+  harness starts its own throwaway Postgres when none is configured, recreates
+  the test databases on every run and can be rerun in any session with
+  `npm install && node run_all.mjs` (Deno 2 is required for the end-to-end
+  harness).
+
+### Fixed
+
+- **Restricted live Stripe keys.** `live_key_guard` now treats `rk_live_…` as a
+  live key instead of passing it as a test key. The `provider_config` check
+  records the same classification, and both restricted-live and restricted-test
+  keys have regression coverage.
+
 ## [0.6.0] — 2026-11-28
 
 Sixth Android release (`versionCode` 6).

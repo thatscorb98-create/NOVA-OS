@@ -129,7 +129,14 @@ Useful checks:
 npm run typecheck                     # TypeScript, no errors allowed
 npx expo-doctor                       # dependency / config health
 npx expo export --platform android    # proves the Android JS bundle builds
+
+# Database suites: every migration into a fresh Postgres, plus the paused audit
+cd supabase/tests/local && npm install && node run_all.mjs && cd ../../..
 ```
+
+The database harness starts its own throwaway Postgres when no server is
+configured, applies all migrations to freshly created databases named
+`nova_test` and `nova_audit_paused`, and never touches a Supabase project.
 
 ## Build the APK and install it on your phone
 
@@ -161,7 +168,7 @@ npx eas-cli@latest build --platform android --profile preview
 | --- | --- |
 | App name | NOVA OS |
 | Package | `com.novaos.app` |
-| Version / code | `0.6.0` / `6` (`versionCode` in `app.json`) |
+| Version / code | `0.6.1` / `7` (`versionCode` in `app.json`) |
 | Permissions | `INTERNET`, `VIBRATE` — nothing else is requested |
 | Icon | 512×512 (above every Android density bucket), plus adaptive foreground and monochrome layers on `#04050A` |
 | Splash | Generated mark on `#04050A`, 220 px wide, dark mode identical |
