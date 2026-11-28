@@ -431,7 +431,18 @@ export interface CloudDeliverable {
   revisions_used: number;
   artifact_url: string | null;
   revision_note: string | null;
+  delivery_message_id: string | null;
   created_at: string;
+}
+
+export interface CloudCustomerHistory {
+  lead_id: string;
+  business_name: string;
+  orders_count: number;
+  paid_cents: number;
+  deliverables_count: number;
+  accepted_count: number;
+  last_delivered_at: string | null;
 }
 
 export const DELIVERABLE_STATUS_LABEL: Record<DeliverableStatus, string> = {

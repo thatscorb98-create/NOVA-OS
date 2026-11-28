@@ -104,6 +104,9 @@ function DeliverableRow({
   onDeliver,
   onAccept,
   onRevision,
+  onSecureLink,
+  onEmailDelivery,
+  onRetention,
 }: {
   item: CloudDeliverable;
   businessName: string | null;
@@ -112,9 +115,13 @@ function DeliverableRow({
   onDeliver: (url: string) => void;
   onAccept: () => void;
   onRevision: (note: string) => void;
+  onSecureLink: () => Promise<string | null>;
+  onEmailDelivery: () => void;
+  onRetention: (messageId: string) => void;
 }) {
   const [mode, setMode] = useState<'none' | 'link' | 'note'>('none');
   const [text, setText] = useState('');
+  const [secureLink, setSecureLink] = useState<string | null>(null);
 
   const revisionsLeft = item.revisions_included - item.revisions_used;
   const canRevise = item.status === 'delivered' && revisionsLeft > 0;
@@ -161,6 +168,12 @@ function DeliverableRow({
         </AppText>
       ) : null}
 
+      {secureLink ? (
+        <AppText selectable variant="micro" style={{ letterSpacing: 0, color: colors.emerald }}>
+          {secureLink}
+        </AppText>
+      ) : null}
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
         {item.status === 'pending' || item.status === 'revision_requested' ? (
           <ActionButton
@@ -188,6 +201,35 @@ function DeliverableRow({
             label="ACCEPT"
             color={colors.success}
             onPress={onAccept}
+            disabled={busy}
+          />
+        ) : null}
+
+        {canDeliver ? (
+          <ActionButton
+            label="EMAIL DELIVERY"
+            color={colors.emerald}
+            onPress={onEmailDelivery}
+            disabled={busy}
+          />
+        ) : null}
+
+        <ActionButton
+          label="SECURE LINK"
+          color={colors.cyan}
+          onPress={() => {
+            void onSecureLink().then((url) => {
+              if (url) setSecureLink(url);
+            });
+          }}
+          disabled={busy}
+        />
+
+        {item.status === 'delivered' && item.delivery_message_id ? (
+          <ActionButton
+            label="RETENTION +30D"
+            color={colors.violetBright}
+            onPress={() => onRetention(item.delivery_message_id as string)}
             disabled={busy}
           />
         ) : null}
@@ -398,6 +440,9 @@ export default function DeliveryScreen() {
                 onDeliver={(url) => void cloud.deliverWork(item.id, url)}
                 onAccept={() => void cloud.acceptWork(item.id)}
                 onRevision={(note) => void cloud.requestRevision(item.id, note)}
+                onSecureLink={() => cloud.mintDeliveryLink(item.id).then((result) => result.url ?? null)}
+                onEmailDelivery={() => void cloud.sendDeliveryEmail(item.id)}
+                onRetention={(messageId) => void cloud.scheduleRetention(messageId)}
               />
             ))
           )}
@@ -418,7 +463,40 @@ export default function DeliveryScreen() {
                 onDeliver={() => {}}
                 onAccept={() => {}}
                 onRevision={() => {}}
+                onSecureLink={() => cloud.mintDeliveryLink(item.id).then((result) => result.url ?? null)}
+                onEmailDelivery={() => {}}
+                onRetention={(messageId) => void cloud.scheduleRetention(messageId)}
               />
+            ))}
+          </Panel>
+        </FadeInView>
+      ) : null}
+
+      {cloud.customerHistory.length > 0 ? (
+        <FadeInView delay={120} style={{ marginTop: spacing.xxl }}>
+          <SectionHeader label={`Customers · ${cloud.customerHistory.length}`} />
+          <Panel padded={false}>
+            {cloud.customerHistory.map((customer) => (
+              <View
+                key={customer.lead_id}
+                style={{
+                  paddingHorizontal: spacing.lg,
+                  paddingVertical: spacing.md,
+                  borderTopWidth: 1,
+                  borderTopColor: colors.hairline,
+                  gap: 4,
+                }}
+              >
+                <AppText variant="bodyStrong" style={{ fontSize: 13.5 }} numberOfLines={1}>
+                  {customer.business_name}
+                </AppText>
+                <AppText variant="micro" style={{ letterSpacing: 0.3, color: colors.textDim }}>
+                  {`${customer.orders_count} ORDER${customer.orders_count === 1 ? '' : 'S'} · ${customer.deliverables_count} DELIVER${customer.deliverables_count === 1 ? 'Y' : 'IES'} · ${customer.accepted_count} ACCEPTED`}
+                </AppText>
+                <AppText variant="micro" style={{ letterSpacing: 0.3, color: colors.cyan }}>
+                  {`PAID $${(customer.paid_cents / 100).toFixed(2)} · LAST DELIVERY ${relativeFromIso(customer.last_delivered_at)}`}
+                </AppText>
+              </View>
             ))}
           </Panel>
         </FadeInView>

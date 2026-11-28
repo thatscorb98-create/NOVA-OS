@@ -240,6 +240,7 @@ Later cloud phases, each with its own evidence and limits:
 - [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
 - [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
 - [`docs/phase-6-studio.md`](docs/phase-6-studio.md) — production jobs, real generated files, storage, SENTINEL QA and bounded retries.
+- [`docs/phase-7-delivery.md`](docs/phase-7-delivery.md) — private expiring links, the delivery email, revision re-production, retention and customer history.
 
 The uploaded build plan is archived at [`docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md`](docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md). [`AGENTS.md`](AGENTS.md) records which roadmap phase is complete and the rules every phase follows.
 
@@ -301,6 +302,14 @@ owner's own action and marks the deal `won`; revision requests are bounded by
 the included allowance. When payments are live, delivery cannot start until a
 succeeded payment record exists. The app can read deliverables but every
 transition goes through a database function.
+
+### Delivery and retention (Phase 7)
+
+A ready production can be delivered as a private, expiring link, optionally by
+email. The customer page signs each stored file for 15 minutes; the bucket is
+never public. A revision re-runs production for the next version, a delivered
+customer can be scheduled for a 30-day owner-approved check-in, and Delivery
+shows one history row per paying customer.
 
 ### Studio (Phase 6)
 

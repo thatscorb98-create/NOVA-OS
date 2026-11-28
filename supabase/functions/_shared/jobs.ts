@@ -9,6 +9,7 @@ import {
 } from './handlers/outreach.ts';
 import { relayCreatePaymentIntent, relayRecordPayment } from './handlers/quotes.ts';
 import { forgeProduce, sentinelQa } from './handlers/production.ts';
+import { relaySendDelivery } from './handlers/delivery.ts';
 
 /**
  * Job handlers.
@@ -88,6 +89,7 @@ export const HANDLERS: Record<string, JobHandler> = {
   'relay.record_payment': relayRecordPayment,
   'forge.produce': forgeProduce,
   'sentinel.qa': sentinelQa,
+  'relay.send_delivery': relaySendDelivery,
 
   'memory.remember': async (ctx) => {
     const rawText = ctx.job.payload.text;

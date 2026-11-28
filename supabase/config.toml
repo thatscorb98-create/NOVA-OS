@@ -34,3 +34,8 @@ verify_jwt = false
 # request is checked against STRIPE_WEBHOOK_SECRET before anything is trusted.
 [functions.stripe-webhook]
 verify_jwt = false
+
+# Delivery links: the customer has no account, so the random token in the URL
+# is the authorization. Minting a link checks the owner's session in code.
+[functions.delivery]
+verify_jwt = false

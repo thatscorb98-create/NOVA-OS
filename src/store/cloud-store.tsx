@@ -15,6 +15,7 @@ import { isCloudConfigured, missingCloudVariables } from '@/lib/cloud/config';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudCustomerHistory,
   CloudDeal,
   CloudDeliverable,
   CloudDiscoveryRun,
@@ -87,6 +88,7 @@ interface CloudContextValue {
   readyStats: { ready: number; withoutContact: number };
   readyLoading: boolean;
   deliverables: CloudDeliverable[];
+  customerHistory: CloudCustomerHistory[];
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
   orders: CloudOrder[];
@@ -150,6 +152,9 @@ interface CloudContextValue {
   deliverWork: (id: string, artifactUrl: string) => Promise<CloudResult>;
   acceptWork: (id: string) => Promise<CloudResult>;
   requestRevision: (id: string, note: string) => Promise<CloudResult>;
+  mintDeliveryLink: (id: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  sendDeliveryEmail: (id: string) => Promise<CloudResult>;
+  scheduleRetention: (messageId: string, days?: number) => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -181,6 +186,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [expenses, setExpenses] = useState<CloudExpense[]>([]);
   const [deals, setDeals] = useState<CloudDeal[]>([]);
   const [replies, setReplies] = useState<CloudReply[]>([]);
+  const [customerHistory, setCustomerHistory] = useState<CloudCustomerHistory[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyKey>(null);
@@ -233,6 +239,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setExpenses([]);
       setDeals([]);
       setReplies([]);
+      setCustomerHistory([]);
       return;
     }
 
@@ -257,6 +264,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextExpenses,
         nextDeals,
         nextReplies,
+        nextHistory,
       ] = await Promise.all([
         cloudApi.loadHealth(client),
         cloudApi.loadJobs(client),
@@ -276,6 +284,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadExpenses(client),
         cloudApi.loadDeals(client),
         cloudApi.loadReplies(client),
+        cloudApi.loadCustomerHistory(client),
       ]);
 
       setHealth(nextHealth);
@@ -297,6 +306,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setExpenses(nextExpenses);
       setDeals(nextDeals);
       setReplies(nextReplies);
+      setCustomerHistory(nextHistory);
       setLastError(null);
     } catch (error) {
       setLastError(cloudApi.describeCloudError(error));
@@ -324,6 +334,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setExpenses([]);
       setDeals([]);
       setReplies([]);
+      setCustomerHistory([]);
       return;
     }
     void refresh();
@@ -1040,6 +1051,88 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const mintDeliveryLink = useCallback(
+    async (id: string): Promise<{ ok: boolean; url?: string; error?: string }> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const link = await cloudApi.mintDeliveryLink(client, id);
+        setLastMessage('Private delivery link created. It expires in 14 days and can be revoked.');
+        return { ok: true, url: link.url };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
+
+  const sendDeliveryEmail = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.enqueueDeliveryEmail(client, id);
+        await refresh();
+        setLastMessage(
+          'Delivery email queued. It is marked delivered only after the provider returns a message id.',
+        );
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const scheduleRetention = useCallback(
+    async (messageId: string, days = 30): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const dueAt = new Date(Date.now() + Math.max(1, days) * 86_400_000).toISOString();
+        await cloudApi.scheduleFollowUp(
+          client,
+          messageId,
+          dueAt,
+          'Check the delivery landed and ask whether anything else is needed.',
+          'retention',
+        );
+        setLastMessage('Retention check-in scheduled. It will be drafted for approval, never sent on its own.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
+
   const loadMoreReadyLeads = useCallback(async () => {
     const client = getSupabase();
     if (!client || readyLoading) return;
@@ -1129,6 +1222,10 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       deliverWork,
       acceptWork,
       requestRevision,
+      mintDeliveryLink,
+      sendDeliveryEmail,
+      scheduleRetention,
+      customerHistory,
       clearNotice,
     }),
     [
@@ -1187,6 +1284,10 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       deliverWork,
       acceptWork,
       requestRevision,
+      mintDeliveryLink,
+      sendDeliveryEmail,
+      scheduleRetention,
+      customerHistory,
       clearNotice,
     ],
   );

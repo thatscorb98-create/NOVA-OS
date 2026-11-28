@@ -2,6 +2,27 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.4.0] — 2026-11-28
+
+Fourth Android release (`versionCode` 4).
+
+### Added
+
+- **Private delivery links (Phase 7).** A random 32-byte token is stored only as
+  a SHA-256 hash with an expiry; the customer's page signs each stored file for
+  15 minutes and never exposes the bucket. Links can be revoked, and expired,
+  revoked and unknown tokens all return the same page.
+- **Delivery email.** `relay.send_delivery` mints the link, sends a transactional
+  email through AgentMail and marks the delivery delivered only after a provider
+  message id comes back. A failed send leaves the delivery open for a retry.
+- **Revision re-production.** Asking for a revision re-arms the paid order's
+  production job, resets its attempt budget, queues FORGE for the next version
+  and keeps the customer's note in the QA trail.
+- **Retention.** A delivered customer can be scheduled for an owner-approved
+  30-day check-in; replies, bounces and suppressions cancel it.
+- **Customer history.** One row per paying customer with orders, paid value,
+  deliveries, acceptances and the last delivery date.
+
 ## [0.3.0] — 2026-11-28
 
 Third Android release (`versionCode` 3).

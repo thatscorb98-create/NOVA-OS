@@ -4,6 +4,7 @@ import type { MemoryRecord } from '@/types/nova';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudCustomerHistory,
   CloudDeal,
   CloudDeliverable,
   CloudDiscoveryRun,
@@ -699,7 +700,7 @@ export async function loadDeliverables(
   const { data, error } = await client
     .from('deliverables')
     .select(
-      'id, quote_id, deal_id, lead_id, title, scope, status, due_at, started_at, delivered_at, accepted_at, revisions_included, revisions_used, artifact_url, revision_note, created_at',
+      'id, quote_id, deal_id, lead_id, title, scope, status, due_at, started_at, delivered_at, accepted_at, revisions_included, revisions_used, artifact_url, revision_note, delivery_message_id, created_at',
     )
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -744,6 +745,53 @@ export async function requestDeliverableRevision(
 ): Promise<void> {
   const { error } = await client.rpc('request_deliverable_revision', { p_id: id, p_note: note });
   if (error) throw new Error(describeCloudError(error));
+}
+
+/** Mint a private, expiring link to the stored files. The token is returned once. */
+export async function mintDeliveryLink(
+  client: SupabaseClient,
+  deliverableId: string,
+  days = 14,
+): Promise<{ url: string; expiresAt: string }> {
+  const { data, error } = await client.functions.invoke('delivery', {
+    body: { action: 'mint', deliverableId, days },
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const payload = data as { ok?: boolean; url?: string; expiresAt?: string; error?: string } | null;
+  if (!payload?.ok || !payload.url) {
+    throw new Error(payload?.error ?? 'The delivery link was not created.');
+  }
+
+  return { url: payload.url, expiresAt: payload.expiresAt ?? '' };
+}
+
+/** Queue the transactional delivery email. It is marked delivered only after a real send. */
+export async function enqueueDeliveryEmail(
+  client: SupabaseClient,
+  deliverableId: string,
+): Promise<string | null> {
+  const { data, error } = await client.rpc('enqueue_agent_job', {
+    p_kind: 'relay.send_delivery',
+    p_payload: { deliverableId },
+    p_idempotency_key: `delivery-email:${deliverableId}`,
+    p_priority: 140,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const job = data as { id?: string } | null;
+  return job?.id ?? null;
+}
+
+export async function loadCustomerHistory(
+  client: SupabaseClient,
+  limit = 50,
+): Promise<CloudCustomerHistory[]> {
+  const { data, error } = await client.rpc('customer_history', { p_limit: limit });
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudCustomerHistory[];
 }
 
 /* -------------------------------------------------------------- Phase 3 follow-ups */
