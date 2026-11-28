@@ -151,7 +151,7 @@ No computer is required. The repository carries a free cloud build (`.github/wor
 5. Unzip the download with the Files app or ZArchiver — it contains `nova-os.apk`.
 6. Tap the APK. Android asks once for permission to install unknown apps: allow it for the app you opened the file from, then tap **Install**.
 
-Builds are signed with the same keystore every run, so a newer APK installs straight over an older one and your missions and memory are kept.
+Each run signs with the runner's own debug keystore. If Android refuses an update from an earlier NOVA build, uninstall the old app first — that also clears its local missions and memory. The universal APK is about 72 MB; if a phone browser leaves you with an invalid package, download `nova-os.zip` from the same release instead, extract it and install the APK inside.
 
 ### Option B — EAS Build (Expo's free tier)
 
