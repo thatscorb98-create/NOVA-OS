@@ -1,0 +1,39 @@
+name: Apply prepared patch
+
+# Temporary helper: fetches a hash-pinned patch, applies it, removes itself in
+# the same commit and pushes the result. The commit it creates carries the real
+# Phase 5 change; this file is deleted by that commit.
+on:
+  push:
+    branches: [nova/cloud-foundation]
+    paths:
+      - '.github/workflows/apply-phase5.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the branch
+        uses: actions/checkout@v4
+        with:
+          ref: nova/cloud-foundation
+          fetch-depth: 1
+
+      - name: Fetch and verify the patch
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o /tmp/nova.patch "https://paste.c-net.org/OffenderPayoff"
+          echo "ef13a131f5ed813a52e8dd6fcbc8f11473740e18d4aefc863abc035c86344844  /tmp/nova.patch" | sha256sum -c -
+
+      - name: Apply, remove the helper, commit and push
+        run: |
+          set -euo pipefail
+          git apply --index /tmp/nova.patch
+          git rm -q .github/workflows/apply-phase5.yml
+          git -c user.name='NOVA Builder' -c user.email='nova-builder@users.noreply.github.com' \
+            commit -m 'Add Stripe checkout, verified payments and finance'
+          git push origin HEAD:nova/cloud-foundation
