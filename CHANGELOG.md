@@ -2,6 +2,26 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.6.3] — 2026-11-28
+
+Ninth Android release (`versionCode` 9).
+
+### Added
+
+- **Stable release signing.** The APK is signed with a repository keystore held
+  in GitHub Actions secrets, so every build carries the same certificate and a
+  new APK installs over the previous one. The workflow checks the certificate
+  fingerprint and stops if it changes.
+- **Emulator install gate.** A clean Android 14 x86_64 emulator installs the
+  APK, launches it, checks the process stays alive and installs the APK again
+  with `-r` before the release is published. An install failure never reaches
+  the download link.
+
+### Notes
+
+- The 0.6.2 build was signed with a per-runner debug key, so the first 0.6.3
+  install still needs one uninstall. Every build after that upgrades in place.
+
 ## [0.6.2] — 2026-11-28
 
 Eighth Android release (`versionCode` 8). Installability fix for the sideloaded

@@ -1,8 +1,8 @@
 name: Build Android APK
 
 # Free cloud build: runs on GitHub's servers, no computer or Expo account needed.
-# Actions → Build Android APK → Run workflow → the run summary prints a direct
-# download link for the APK (and the same file is attached as an artifact).
+# Actions → Build Android APK → Run workflow → the run summary prints direct
+# download links for the APK (and the same file is attached as an artifact).
 #
 # Cloud configuration comes from repository *variables* (not secrets), because
 # these two values are public by design and ship inside the bundle:
@@ -10,9 +10,14 @@ name: Build Android APK
 #     SUPABASE_URL       https://<project-ref>.supabase.co
 #     SUPABASE_ANON_KEY  the project's anon/public key
 #
-# If they are absent the build still succeeds, but produces a local-only APK and
-# says so in the summary. Set `require_cloud` to true to make a missing
-# configuration fail the build instead.
+# Release signing comes from repository *secrets*, so every build carries the
+# same certificate and a new APK installs over the previous one:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   ANDROID_SIGNING_CERT_SHA256 (expected certificate fingerprint)
+#
+# The APK is installed, launched and replaced on a clean emulator before the
+# publish job runs. A build that cannot install is never published.
 
 on:
   workflow_dispatch:
@@ -112,11 +117,36 @@ jobs:
         run: |
           printf '\norg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8\norg.gradle.parallel=true\norg.gradle.workers.max=4\norg.gradle.caching=true\nreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64\n' >> android/gradle.properties
 
+      # The keystore itself is never in the repository. It is decoded into the
+      # runner's temporary directory for this job only.
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::Signing secrets are missing. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          umask 077
+          KEYSTORE="$RUNNER_TEMP/nova-release.p12"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          export NOVA_KEYSTORE_PATH="$KEYSTORE"
+          echo "NOVA_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+          node scripts/configure-android-signing.mjs
+
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build release APK
         working-directory: android
+        env:
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon -x lint -x test
 
       - name: Collect APK
@@ -125,17 +155,99 @@ jobs:
           cp android/app/build/outputs/apk/release/*.apk build-output/nova-os.apk
           ls -lh build-output
 
-      # A 36 MB download can be truncated by a phone browser, and an APK that is
-      # not a valid signed package is refused with "package seems to be invalid".
+      # A 75 MB download can be truncated by a phone browser, and an APK that
+      # is not validly signed is refused with "package seems to be invalid".
       # Verify the signature here, and publish a zip copy as a fallback.
-      - name: Verify signature and package the APK
+      - name: Verify signature, fingerprint and package
+        env:
+          EXPECTED_CERT: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
         run: |
           set -euo pipefail
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/apksigner" verify --verbose --print-certs build-output/nova-os.apk
+          CERT=$("$BT/apksigner" verify --print-certs build-output/nova-os.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          echo "Certificate SHA-256: $CERT"
+          if [ -n "${EXPECTED_CERT:-}" ] && [ "$CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::APK is signed with an unexpected certificate ($CERT), so it cannot upgrade an installed build."
+            exit 1
+          fi
           (cd build-output && zip -q -9 nova-os.zip nova-os.apk)
           sha256sum build-output/nova-os.apk build-output/nova-os.zip | tee build-output/sha256.txt
           unzip -l build-output/nova-os.apk | grep -oE 'lib/[^/]+/' | sort -u
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-os-apk
+          path: |
+            build-output/nova-os.apk
+            build-output/nova-os.zip
+            build-output/sha256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  emulator:
+    name: Emulator install test
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: nova-os-apk
+          path: build-output
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # A clean Android 14 x86_64 image: install the APK, start it, confirm the
+      # process stays alive, then install the same APK again with -r. That is
+      # the same replace path an update uses, so a broken package or a changed
+      # key fails here instead of on the phone.
+      - name: Install, launch and replace on a clean Android 14 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -eu
+            adb install build-output/nova-os.apk
+            adb shell pm path com.novaos.app
+            adb shell am start -W -n com.novaos.app/.MainActivity
+            sleep 10
+            PID=$(adb shell pidof com.novaos.app | tr -d '\r')
+            if [ -z "$PID" ]; then
+              echo "::error::The app is not running 10s after launch."
+              adb logcat -d -t 400
+              exit 1
+            fi
+            echo "App running as pid $PID"
+            adb install -r build-output/nova-os.apk
+            adb shell pm path com.novaos.app
+
+  publish:
+    name: Publish download
+    needs: [apk, emulator]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: nova-os-apk
+          path: build-output
 
       # A release asset gives a permanent public URL that survives the 90-day
       # artifact expiry and works from a phone browser without a GitHub login.
@@ -193,6 +305,8 @@ jobs:
             echo "Cloud: **${CLOUD_CONFIGURED:-false}**  "
             echo "Build: \`${GITHUB_SHA::7}\`"
             echo ""
+            echo "Installed and replaced successfully on an Android 14 x86_64 emulator."
+            echo ""
             if [ -n "$RELEASE_URL" ]; then
               echo "Permanent release assets, rebuilt on every run."
             else
@@ -201,11 +315,3 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "APK URL: $URL"
           echo "ZIP URL: $ZIP_URL"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: nova-os-apk
-          path: build-output/nova-os.apk
-          if-no-files-found: error
-          retention-days: 30
