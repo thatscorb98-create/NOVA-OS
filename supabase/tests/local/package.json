@@ -1,0 +1,16 @@
+{
+  "name": "nova-os-local-db-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway PostgreSQL verification for NOVA OS migrations and the paused audit.",
+  "scripts": {
+    "test": "node run_all.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  },
+  "optionalDependencies": {
+    "@embedded-postgres/linux-x64": "^19.0.0-beta.20"
+  }
+}
