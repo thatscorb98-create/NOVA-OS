@@ -15,17 +15,32 @@ export interface AuditCheckResult {
 }
 
 /**
+ * Stripe secret-key prefixes that spend or move real money.
+ *
+ * Restricted keys (`rk_live_…`) are scoped, but they are still live keys: a
+ * restricted live key must never be mistaken for a test key by the guard.
+ */
+export const LIVE_STRIPE_KEY_PREFIXES = ['sk_live_', 'rk_live_'] as const;
+
+export function isLiveStripeKey(stripeKey: string | null | undefined): boolean {
+  if (!stripeKey) return false;
+  return LIVE_STRIPE_KEY_PREFIXES.some((prefix) => stripeKey.startsWith(prefix));
+}
+
+/**
  * Decide whether the configured Stripe key may be used for a controlled test.
  *
- * - live key present: `fail` — Phase 9 must use a test key.
+ * - live key present (standard or restricted): `fail` — Phase 9 must use a
+ *   test key.
  * - test key present: `pass` — the guard ran and refused nothing.
  * - no key: `blocked` — the rejection branch was not exercised.
  */
 export function liveKeyGuardCheck(stripeKey: string | null | undefined): AuditCheckResult {
-  if (stripeKey?.startsWith('sk_live_')) {
+  if (isLiveStripeKey(stripeKey)) {
     return {
       status: 'fail',
-      detail: 'A live Stripe key is present. Phase 9 must use a test key until the dry run passes.',
+      detail:
+        'A live or restricted live Stripe key is present. Phase 9 must use a test key until the dry run passes.',
       data: { liveStripeKey: true },
     };
   }
