@@ -268,7 +268,7 @@ export const relaySendDelivery: JobHandler = async (ctx: JobContext) => {
     url,
     '',
     `This link is private to you and expires on ${formatDate(expiresAt.toISOString())}.`,
-    `Your quote includes ${delivery.revisions_included} revision${delivery.revisions_included === 1 ? '' : 's'}; ${remaining} remaining. Reply to this email to request a change.`,
+    `Your quote includes ${delivery.revisions_included} revision${delivery.revisions_included === 1 ? '' : 's'}; ${remaining} remaining. Use the "Request a revision" button on the page, or reply to this email, if you would like a change.`,
     '',
     quoteRow.terms ? `Terms: ${quoteRow.terms}` : null,
     quoteRow.amount_cents ? `Paid: ${money(quoteRow.amount_cents, quoteRow.currency)}` : null,

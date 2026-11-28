@@ -12,6 +12,7 @@ import { Screen } from '@/components/ui/Screen';
 import {
   DELIVERABLE_STATUS_LABEL,
   type CloudDeliverable,
+  type CloudDeliveryLink,
   type CloudQuote,
   type DeliverableStatus,
 } from '@/lib/cloud/types';
@@ -99,6 +100,7 @@ function ActionButton({
 function DeliverableRow({
   item,
   businessName,
+  activeLinks,
   busy,
   onStart,
   onDeliver,
@@ -106,10 +108,12 @@ function DeliverableRow({
   onRevision,
   onSecureLink,
   onEmailDelivery,
-  onRetention,
+  onPlanRetention,
+  onRevokeLinks,
 }: {
   item: CloudDeliverable;
   businessName: string | null;
+  activeLinks: CloudDeliveryLink[];
   busy: boolean;
   onStart: () => void;
   onDeliver: (url: string) => void;
@@ -117,7 +121,8 @@ function DeliverableRow({
   onRevision: (note: string) => void;
   onSecureLink: () => Promise<string | null>;
   onEmailDelivery: () => void;
-  onRetention: (messageId: string) => void;
+  onPlanRetention: (messageId: string) => void;
+  onRevokeLinks: () => void;
 }) {
   const [mode, setMode] = useState<'none' | 'link' | 'note'>('none');
   const [text, setText] = useState('');
@@ -174,6 +179,15 @@ function DeliverableRow({
         </AppText>
       ) : null}
 
+      {activeLinks.length > 0 ? (
+        <AppText variant="micro" style={{ letterSpacing: 0.3, color: colors.violetBright }}>
+          {`${activeLinks.length} LIVE LINK${activeLinks.length === 1 ? '' : 'S'} · ${activeLinks.reduce(
+            (total, link) => total + link.access_count,
+            0,
+          )} OPEN${activeLinks.reduce((total, link) => total + link.access_count, 0) === 1 ? '' : 'S'} · EXPIRES ${relativeFromIso(activeLinks[0].expires_at)}`}
+        </AppText>
+      ) : null}
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
         {item.status === 'pending' || item.status === 'revision_requested' ? (
           <ActionButton
@@ -225,11 +239,21 @@ function DeliverableRow({
           disabled={busy}
         />
 
-        {item.status === 'delivered' && item.delivery_message_id ? (
+        {item.delivery_message_id &&
+        (item.status === 'delivered' || item.status === 'accepted') ? (
           <ActionButton
-            label="RETENTION +30D"
+            label="RETENTION PLAN"
             color={colors.violetBright}
-            onPress={() => onRetention(item.delivery_message_id as string)}
+            onPress={() => onPlanRetention(item.delivery_message_id as string)}
+            disabled={busy}
+          />
+        ) : null}
+
+        {activeLinks.length > 0 ? (
+          <ActionButton
+            label="REVOKE LINK"
+            color={colors.danger}
+            onPress={onRevokeLinks}
             disabled={busy}
           />
         ) : null}
@@ -344,6 +368,14 @@ export default function DeliveryScreen() {
     return cloud.leads.find((lead) => lead.id === id)?.business_name ?? null;
   };
 
+  const activeLinks = (deliverableId: string): CloudDeliveryLink[] =>
+    cloud.deliveryLinks.filter(
+      (link) =>
+        link.deliverable_id === deliverableId &&
+        !link.revoked_at &&
+        Date.parse(link.expires_at) > Date.now(),
+    );
+
   const toOpen = cloud.quotes.filter(
     (quote) =>
       quote.status === 'accepted' &&
@@ -435,6 +467,7 @@ export default function DeliveryScreen() {
                 key={item.id}
                 item={item}
                 businessName={businessName(item.lead_id)}
+                activeLinks={activeLinks(item.id)}
                 busy={busy}
                 onStart={() => void cloud.startDeliverable(item.id)}
                 onDeliver={(url) => void cloud.deliverWork(item.id, url)}
@@ -442,7 +475,8 @@ export default function DeliveryScreen() {
                 onRevision={(note) => void cloud.requestRevision(item.id, note)}
                 onSecureLink={() => cloud.mintDeliveryLink(item.id).then((result) => result.url ?? null)}
                 onEmailDelivery={() => void cloud.sendDeliveryEmail(item.id)}
-                onRetention={(messageId) => void cloud.scheduleRetention(messageId)}
+                onPlanRetention={(messageId) => void cloud.scheduleDeliveryFollowUps(messageId)}
+                onRevokeLinks={() => void cloud.revokeDeliveryLinks(item.id)}
               />
             ))
           )}
@@ -458,6 +492,7 @@ export default function DeliveryScreen() {
                 key={item.id}
                 item={item}
                 businessName={businessName(item.lead_id)}
+                activeLinks={activeLinks(item.id)}
                 busy={busy}
                 onStart={() => {}}
                 onDeliver={() => {}}
@@ -465,7 +500,8 @@ export default function DeliveryScreen() {
                 onRevision={() => {}}
                 onSecureLink={() => cloud.mintDeliveryLink(item.id).then((result) => result.url ?? null)}
                 onEmailDelivery={() => {}}
-                onRetention={(messageId) => void cloud.scheduleRetention(messageId)}
+                onPlanRetention={(messageId) => void cloud.scheduleDeliveryFollowUps(messageId)}
+                onRevokeLinks={() => void cloud.revokeDeliveryLinks(item.id)}
               />
             ))}
           </Panel>

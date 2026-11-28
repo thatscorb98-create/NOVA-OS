@@ -4,7 +4,7 @@ A native Android AI-agent operating system, built with **React Native + Expo + T
 
 NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (research & analysis), **FORGE** (engineering), **ECHO** (marketing & content), **STERLING** (business strategy), **RELAY** (operations) and **SENTINEL** (quality & safety).
 
-> **Current status: Phase Four — mission execution.**
+> **Current status: Phase Eight — autonomous company loop.**
 > Give NOVA a goal and it plans the work, delegates each task to a specialist, reviews what comes back, retries failures and writes a final report. Runs are gated by approvals and hard budgets, and memory from previous missions is recalled into every prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
 >
 > **Cloud foundation:** discovery, outreach, quotes, Stripe checkout and verified payments, the reply pipeline and delivery tracking are built and checked against a local Postgres. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered. No Stripe key is configured, so no Checkout Session has ever been created by this build.
@@ -240,7 +240,8 @@ Later cloud phases, each with its own evidence and limits:
 - [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
 - [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
 - [`docs/phase-6-studio.md`](docs/phase-6-studio.md) — production jobs, real generated files, storage, SENTINEL QA and bounded retries.
-- [`docs/phase-7-delivery.md`](docs/phase-7-delivery.md) — private expiring links, the delivery email, revision re-production, retention and customer history.
+- [`docs/phase-7-delivery.md`](docs/phase-7-delivery.md) — private expiring links, the delivery email, revision re-production, receipt/review/recurring retention, customer revisions from the link, revocation and customer history.
+- [`docs/phase-8-autonomy.md`](docs/phase-8-autonomy.md) — the scheduler-driven company loop, its one-action cycles, checkpoints and spending cap.
 
 The uploaded build plan is archived at [`docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md`](docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md). [`AGENTS.md`](AGENTS.md) records which roadmap phase is complete and the rules every phase follows.
 
@@ -307,9 +308,27 @@ transition goes through a database function.
 
 A ready production can be delivered as a private, expiring link, optionally by
 email. The customer page signs each stored file for 15 minutes; the bucket is
-never public. A revision re-runs production for the next version, a delivered
-customer can be scheduled for a 30-day owner-approved check-in, and Delivery
-shows one history row per paying customer.
+never public. The customer can request a revision from that page without an
+account, and the request re-runs production for the next version. Delivery lists
+the live links and can revoke a link after the app has been reopened. A delivered
+customer gets a receipt check, a review ask and a later recurring-service
+check-in; each is a draft for approval and every one is cancelled by a reply or
+opt-out. Delivery also shows one history row per paying customer.
+
+### Autonomous loop (Phase 8)
+
+`nova.orchestrate` runs from the scheduler, not the phone. Each minute it reads
+one owner-scoped snapshot and queues **one** next action: a due follow-up, a
+reply draft, a paid delivery, a paid production run, an approved email, a
+retention plan, a new outreach draft, or discovery. A repeated tick cannot
+duplicate work: every action has an idempotency key, the queue locks jobs, and
+only one cycle per owner is pending at a time.
+
+The loop never creates a quote, a payment or a checkout, never buys or upgrades a
+service, and cannot spend past `ai_budget_cents`. A closed email or production
+switch records a blocked cycle with the reason instead of working around it.
+Cloud shows the live counts, the AI budget, the last decisions and a button to
+run a cycle now; the company-mode chips pause it.
 
 ### Studio (Phase 6)
 

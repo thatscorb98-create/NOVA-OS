@@ -10,6 +10,7 @@ import {
 import { relayCreatePaymentIntent, relayRecordPayment } from './handlers/quotes.ts';
 import { forgeProduce, sentinelQa } from './handlers/production.ts';
 import { relaySendDelivery } from './handlers/delivery.ts';
+import { novaOrchestrate, relayPlanRetention } from './handlers/orchestrator.ts';
 
 /**
  * Job handlers.
@@ -90,6 +91,8 @@ export const HANDLERS: Record<string, JobHandler> = {
   'forge.produce': forgeProduce,
   'sentinel.qa': sentinelQa,
   'relay.send_delivery': relaySendDelivery,
+  'nova.orchestrate': novaOrchestrate,
+  'relay.plan_retention': relayPlanRetention,
 
   'memory.remember': async (ctx) => {
     const rawText = ctx.job.payload.text;

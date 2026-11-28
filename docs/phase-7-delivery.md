@@ -25,6 +25,11 @@ not a screenshot, not a public bucket URL, and not a status someone typed.
 `revoke_delivery_link`. An unknown, expired and revoked token all render the same
 generic page, so the link cannot be used to discover deliveries.
 
+**Revocation after a restart.** The app may no longer know an old link id, so
+`revoke_delivery_links(deliverable_id)` revokes every live link for one delivery
+and is owner-scoped. Delivery lists the live links with their open count, shows
+when they expire, and offers **Revoke link** for that delivery.
+
 The delivery email is transactional: it does not consume the outreach daily cap
 and is not blocked by a marketing opt-out, because the customer has already paid
 for the work. It still requires the owner's email switch, a configured provider
@@ -40,12 +45,38 @@ key. FORGE writes version `n+1`, SENTINEL checks it, and the owner can deliver
 again. The customer's revision note is kept in the job's QA notes and in the
 deliverable.
 
-## Retention and customer history
+**From the customer's own link.** The delivery page has a plain HTML form (no
+script) that asks for a change and posts back to the same function. The function
+checks the `Origin` when the browser sends one, hashes the token and calls
+`request_delivery_revision`. That function refuses an unknown, expired or revoked
+link, a delivery that is not in `delivered`, one that was already accepted, and
+exhausted revisions. A valid request increments `revisions_used`, stores the note
+and moves the delivery to `revision_requested`, which fires the same re-arming
+trigger. The result is shown on the page with the revisions remaining.
 
-After a delivery has a sent email, Delivery offers **Retention +30d**. It calls
-`schedule_follow_up(kind => 'retention')` against that sent message. The existing
-rules still apply: a reply, bounce or suppression cancels it, and a due retention
-follow-up becomes an owner-approved draft — it is never sent automatically.
+The app-side revision button remains, for an owner who takes the request by
+phone or email.
+
+## Retention plan and customer history
+
+After a delivery has a sent email, Delivery offers **Retention plan**. It calls
+`schedule_delivery_follow_ups` against that sent message, which schedules three
+separate follow-ups:
+
+- **receipt** at +2 days — check the files opened and the customer received what
+they paid for;
+- **review** at +7 days — ask how it is going and whether they would leave a
+short honest review, with no incentive;
+- **recurring** at +60 days — ask whether they would like the same work
+refreshed, without assuming a schedule, scope or price.
+
+Each kind is unique per message while open, and repeating the call only adds the
+kinds that are missing. The database refuses to schedule when the address is
+suppressed, the contact has opted out or the lead is `do_not_contact`. The Phase
+3 rules still apply: a reply, bounce or suppression cancels **every** open kind,
+and a due follow-up becomes an owner-approved draft — it is never sent
+automatically. The draft copy differs by kind and always carries the opt-out
+line.
 
 `customer_history()` returns one row per customer with an order: order count,
 paid cents, delivery count, accepted count and last delivery. It is
@@ -54,10 +85,13 @@ to authenticated only.
 
 ## Checks
 
-- Fresh local Postgres, all migrations: **86 assertions passed, 0 failed** (68
-  existing + 18 Phase 7 assertions covering link minting, token resolution,
-  revocation, expiry, revision re-arming, revision allowance, customer history,
-  delivery-message idempotency and RLS).
+- Fresh local Postgres, all migrations: **112 assertions passed, 0 failed** (86
+  through Phase 7 + 26 covering the Phase 7 completion and Phase 8 snapshot:
+  receipt/review/recurring scheduling, idempotency, opt-out cancellation,
+  customer revision from a token, expiry, link revocation, company cycles and the
+  AI budget). The earlier 86 cover link minting, token resolution, revocation,
+  expiry, revision re-arming, revision allowance, customer history,
+  delivery-message idempotency and RLS.
 - `npx tsc --noEmit` exit 0.
 - `deno check` on every edge function (including the new `delivery` function)
   exit 0.
@@ -71,4 +105,6 @@ functions and RLS were executed against the local Postgres harness; the HTTP
 page and the provider call were only type-checked.
 
 The link page does not include a customer acceptance button; acceptance remains
-an owner decision in the app, as built in the earlier delivery phase.
+an owner decision in the app, as built in the earlier delivery phase. The
+revision form was type-checked and its database function was exercised in local
+Postgres, but the form has not been submitted through a live Supabase function.

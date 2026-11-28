@@ -2,6 +2,33 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.5.0] — 2026-11-28
+
+Fifth Android release (`versionCode` 5).
+
+### Added
+
+- **Autonomous company loop (Phase 8).** `nova.orchestrate` runs from the
+  scheduler and queues one gated action per cycle: due follow-up, reply draft,
+  paid delivery, paid production, approved email, retention plan, outreach draft
+  or discovery. Each action keeps its own idempotency key, the scheduler allows
+  one pending cycle per owner, and every decision is recorded in
+  `company_cycles` and the event log. The loop never creates a quote, payment or
+  checkout, never buys or upgrades a service, and the AI budget refuses spend
+  past its cap.
+- **Retention plan (Phase 7).** A delivery can schedule a receipt check, a review
+  ask and a later recurring-service check-in. Each kind is unique while open,
+  works with opt-outs, and becomes an owner-approved draft — never an automatic
+  send. Replies and suppressions cancel all three.
+- **Customer revisions from the delivery link (Phase 7).** The customer page has
+  a no-script form that records a revision within the included allowance, stores
+  the note and re-arms production. Expired, revoked, accepted and exhausted
+  deliveries are refused.
+- **Link revocation (Phase 7).** Delivery lists live links with their open count
+  and can revoke every link for a delivery, including after the app restarts.
+- **Loop dashboard (Phase 8).** Cloud shows the loop counts, AI budget, last
+  decisions and a one-click cycle run.
+
 ## [0.4.0] — 2026-11-28
 
 Fourth Android release (`versionCode` 4).

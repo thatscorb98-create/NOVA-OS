@@ -15,9 +15,11 @@ import { isCloudConfigured, missingCloudVariables } from '@/lib/cloud/config';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudCompanyCycle,
   CloudCustomerHistory,
   CloudDeal,
   CloudDeliverable,
+  CloudDeliveryLink,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -26,6 +28,7 @@ import type {
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudLoopSnapshot,
   CloudOrder,
   CloudOutreachMessage,
   CloudPaymentIntent,
@@ -88,7 +91,10 @@ interface CloudContextValue {
   readyStats: { ready: number; withoutContact: number };
   readyLoading: boolean;
   deliverables: CloudDeliverable[];
+  deliveryLinks: CloudDeliveryLink[];
   customerHistory: CloudCustomerHistory[];
+  companyCycles: CloudCompanyCycle[];
+  loopSnapshot: CloudLoopSnapshot | null;
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
   orders: CloudOrder[];
@@ -154,7 +160,9 @@ interface CloudContextValue {
   requestRevision: (id: string, note: string) => Promise<CloudResult>;
   mintDeliveryLink: (id: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
   sendDeliveryEmail: (id: string) => Promise<CloudResult>;
-  scheduleRetention: (messageId: string, days?: number) => Promise<CloudResult>;
+  scheduleDeliveryFollowUps: (messageId: string) => Promise<CloudResult>;
+  revokeDeliveryLinks: (deliverableId: string) => Promise<CloudResult>;
+  runCompanyCycle: () => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -179,6 +187,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [readyStats, setReadyStats] = useState({ ready: 0, withoutContact: 0 });
   const [readyLoading, setReadyLoading] = useState(false);
   const [deliverables, setDeliverables] = useState<CloudDeliverable[]>([]);
+  const [deliveryLinks, setDeliveryLinks] = useState<CloudDeliveryLink[]>([]);
   const [quotes, setQuotes] = useState<CloudQuote[]>([]);
   const [paymentIntents, setPaymentIntents] = useState<CloudPaymentIntent[]>([]);
   const [orders, setOrders] = useState<CloudOrder[]>([]);
@@ -187,6 +196,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [deals, setDeals] = useState<CloudDeal[]>([]);
   const [replies, setReplies] = useState<CloudReply[]>([]);
   const [customerHistory, setCustomerHistory] = useState<CloudCustomerHistory[]>([]);
+  const [companyCycles, setCompanyCycles] = useState<CloudCompanyCycle[]>([]);
+  const [loopSnapshot, setLoopSnapshot] = useState<CloudLoopSnapshot | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyKey>(null);
@@ -232,6 +243,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setEmailAccount(null);
       setReadyLeads([]);
       setDeliverables([]);
+      setDeliveryLinks([]);
       setQuotes([]);
       setPaymentIntents([]);
       setOrders([]);
@@ -240,6 +252,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeals([]);
       setReplies([]);
       setCustomerHistory([]);
+      setCompanyCycles([]);
+      setLoopSnapshot(null);
       return;
     }
 
@@ -265,6 +279,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextDeals,
         nextReplies,
         nextHistory,
+        nextLinks,
+        nextCycles,
+        nextLoop,
       ] = await Promise.all([
         cloudApi.loadHealth(client),
         cloudApi.loadJobs(client),
@@ -285,6 +302,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDeals(client),
         cloudApi.loadReplies(client),
         cloudApi.loadCustomerHistory(client),
+        cloudApi.loadDeliveryLinks(client),
+        cloudApi.loadCompanyCycles(client),
+        cloudApi.loadLoopSnapshot(client),
       ]);
 
       setHealth(nextHealth);
@@ -307,6 +327,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeals(nextDeals);
       setReplies(nextReplies);
       setCustomerHistory(nextHistory);
+      setDeliveryLinks(nextLinks);
+      setCompanyCycles(nextCycles);
+      setLoopSnapshot(nextLoop);
       setLastError(null);
     } catch (error) {
       setLastError(cloudApi.describeCloudError(error));
@@ -335,6 +358,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeals([]);
       setReplies([]);
       setCustomerHistory([]);
+      setDeliveryLinks([]);
+      setCompanyCycles([]);
+      setLoopSnapshot(null);
       return;
     }
     void refresh();
@@ -388,10 +414,14 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     setEmailAccount(null);
     setReadyLeads([]);
     setDeliverables([]);
+    setDeliveryLinks([]);
     setQuotes([]);
     setPaymentIntents([]);
     setDeals([]);
     setReplies([]);
+    setCustomerHistory([]);
+    setCompanyCycles([]);
+    setLoopSnapshot(null);
     setLastError(null);
     setLastMessage(null);
   }, []);
@@ -1102,8 +1132,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
-  const scheduleRetention = useCallback(
-    async (messageId: string, days = 30): Promise<CloudResult> => {
+  const scheduleDeliveryFollowUps = useCallback(
+    async (messageId: string): Promise<CloudResult> => {
       const client = getSupabase();
       if (!client) return { ok: false, error: 'No cloud project is configured.' };
 
@@ -1112,16 +1142,19 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setLastMessage(null);
 
       try {
-        const dueAt = new Date(Date.now() + Math.max(1, days) * 86_400_000).toISOString();
-        await cloudApi.scheduleFollowUp(
-          client,
-          messageId,
-          dueAt,
-          'Check the delivery landed and ask whether anything else is needed.',
-          'retention',
-        );
-        setLastMessage('Retention check-in scheduled. It will be drafted for approval, never sent on its own.');
-        return { ok: true };
+        const scheduled = await cloudApi.scheduleDeliveryFollowUps(client, messageId);
+        await refresh();
+
+        if (scheduled.length === 0) {
+          const detail =
+            'No follow-ups were added. The customer opted out, or the receipt, review and recurring checks are already scheduled.';
+          setLastMessage(detail);
+          return { ok: true, detail };
+        }
+
+        const detail = `Retention plan scheduled: ${scheduled.join(', ')}. Each becomes a draft for your approval, never an automatic send.`;
+        setLastMessage(detail);
+        return { ok: true, detail };
       } catch (error) {
         const message = cloudApi.describeCloudError(error);
         setLastError(message);
@@ -1130,8 +1163,67 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         setBusy(null);
       }
     },
-    [],
+    [refresh],
   );
+
+  const revokeDeliveryLinks = useCallback(
+    async (deliverableId: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('delivery');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const revoked = await cloudApi.revokeDeliverableLinks(client, deliverableId);
+        await refresh();
+
+        const detail =
+          revoked === 0
+            ? 'There was no live delivery link to revoke.'
+            : `${revoked} delivery link${revoked === 1 ? '' : 's'} revoked. The customer page now returns the generic unavailable notice.`;
+
+        setLastMessage(detail);
+        return { ok: true, detail };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const runCompanyCycle = useCallback(async (): Promise<CloudResult> => {
+    const client = getSupabase();
+    if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+    setBusy('worker');
+    setLastError(null);
+    setLastMessage(null);
+
+    try {
+      const jobId = await cloudApi.enqueueCompanyCycle(client);
+      const summary = await cloudApi.runWorker(client, 6);
+      await refresh();
+
+      const detail = jobId
+        ? `Company cycle queued. The worker ran ${summary.claimed} job(s): ${summary.succeeded} succeeded, ${summary.failed} failed, ${summary.released} deferred.`
+        : 'The cycle was already queued for this moment.';
+
+      setLastMessage(detail);
+      return { ok: true, detail };
+    } catch (error) {
+      const message = cloudApi.describeCloudError(error);
+      setLastError(message);
+      return { ok: false, error: message };
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
 
   const loadMoreReadyLeads = useCallback(async () => {
     const client = getSupabase();
@@ -1224,7 +1316,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       requestRevision,
       mintDeliveryLink,
       sendDeliveryEmail,
-      scheduleRetention,
+      scheduleDeliveryFollowUps,
+      revokeDeliveryLinks,
+      runCompanyCycle,
+      deliveryLinks,
+      companyCycles,
+      loopSnapshot,
       customerHistory,
       clearNotice,
     }),
@@ -1286,7 +1383,12 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       requestRevision,
       mintDeliveryLink,
       sendDeliveryEmail,
-      scheduleRetention,
+      scheduleDeliveryFollowUps,
+      revokeDeliveryLinks,
+      runCompanyCycle,
+      deliveryLinks,
+      companyCycles,
+      loopSnapshot,
       customerHistory,
       clearNotice,
     ],

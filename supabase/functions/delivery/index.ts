@@ -6,6 +6,8 @@ import { adminClient, env, SERVICE_VERSION } from '../_shared/supabase.ts';
  * Customer delivery page.
  *
  *   GET  ?token=<64 hex>   the customer opens their private delivery link
+ *   POST (form)            action=revision, token, note — the customer asks for
+ *                          a change without an account
  *   POST { action: 'mint', deliverableId, days }
  *                          the signed-in owner creates a new link
  *
@@ -13,6 +15,9 @@ import { adminClient, env, SERVICE_VERSION } from '../_shared/supabase.ts';
  * revoked. The page signs each file for 15 minutes; the bucket stays private.
  * An unknown, expired or revoked token gets the same generic page, so the
  * response cannot be used to probe which deliveries exist.
+ *
+ * The revision form is a plain HTML form: no script runs on this page, and the
+ * CSP allows form submission back to this same origin only.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,7 +31,7 @@ const PAGE_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'Content-Security-Policy':
-    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
 interface DeliverableRow {
@@ -108,6 +113,11 @@ function page(title: string, body: string, status = 200): Response {
   .meta { font-size: 12px; color: #7c89a8; margin-top: 3px; word-break: break-all; }
   a.button { flex: none; text-decoration: none; font-size: 13px; font-weight: 600; color: #04050a;
     background: #22d3ee; border-radius: 9px; padding: 9px 14px; }
+  form.revision { margin-top: 10px; display: grid; gap: 10px; }
+  textarea { width: 100%; min-height: 96px; resize: vertical; color: #e8ecf8; background: #04050a;
+    border: 1px solid #1d2438; border-radius: 10px; padding: 12px; font: inherit; font-size: 14px; }
+  button { justify-self: start; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+    color: #04050a; background: #fbbf24; border: 0; border-radius: 9px; padding: 10px 16px; }
   .note { margin-top: 24px; padding-top: 16px; border-top: 1px solid #1d2438;
     font-size: 12px; line-height: 1.6; color: #7c89a8; }
 </style>
@@ -149,6 +159,56 @@ function publicDeliveryUrl(token: string): string {
   return `${base}/functions/v1/delivery?token=${token}`;
 }
 
+function requestIsSameOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  if (!origin) return true;
+
+  try {
+    const base = (env('SUPABASE_URL') ?? '').replace(/\/+$/, '');
+    return Boolean(base) && new URL(origin).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+function revisionSection(token: string, row: ResolvedRow): string {
+  const remaining = Math.max(0, row.revisions_included - row.revisions_used);
+
+  if (row.status === 'revision_requested') {
+    return `<h2>Revision in progress</h2>
+      <p>Your change request is with the studio. A new version will arrive at this same link.</p>`;
+  }
+
+  if (row.status === 'accepted') {
+    return `<h2>Accepted</h2>
+      <p>This delivery was accepted, so it can no longer be changed here.</p>`;
+  }
+
+  if (row.status !== 'delivered') {
+    return `<h2>Revisions</h2>
+      <p>The files are being prepared, so there is nothing to revise yet.</p>`;
+  }
+
+  if (remaining <= 0) {
+    return `<h2>Revisions</h2>
+      <p>This order has used all ${row.revisions_included} included revision${
+        row.revisions_included === 1 ? '' : 's'
+      }. Reply to the delivery email if something is wrong and we will help.</p>`;
+  }
+
+  return `<h2>Request a revision</h2>
+    <p>Your quote includes ${row.revisions_included} revision${
+      row.revisions_included === 1 ? '' : 's'
+    }; ${remaining} remaining. Tell us what should change and the studio will prepare a new version.</p>
+    <form class="revision" method="post" action="?token=${token}">
+      <input type="hidden" name="action" value="revision">
+      <input type="hidden" name="token" value="${token}">
+      <textarea name="note" required minlength="3" maxlength="1000"
+        placeholder="What should change? Please be specific about the text, colours or files."></textarea>
+      <button type="submit">Request this revision</button>
+    </form>`;
+}
+
 async function renderDelivery(token: string): Promise<Response> {
   if (!TOKEN.test(token)) return unavailable();
 
@@ -166,6 +226,7 @@ async function renderDelivery(token: string): Promise<Response> {
   const { data: job } = await admin
     .from('production_jobs')
     .select('id, version, status, qa_notes')
+    .eq('owner_id', row.owner_id)
     .eq('quote_id', row.quote_id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -215,7 +276,6 @@ async function renderDelivery(token: string): Promise<Response> {
     </div>`);
   }
 
-  const remaining = Math.max(0, row.revisions_included - row.revisions_used);
   const business = lead?.business_name ? escapeHtml(String(lead.business_name)) : '';
 
   return page(
@@ -226,11 +286,57 @@ async function renderDelivery(token: string): Promise<Response> {
      ${row.scope ? `<p>${escapeHtml(row.scope)}</p>` : ''}
      <h2>Your files</h2>
      ${links.join('')}
+     ${revisionSection(token, row)}
      <div class="note">
        <p>Download links expire 15 minutes after this page loads. This link expires on ${formatDate(row.expires_at)}.</p>
-       <p>${remaining} of ${row.revisions_included} revision${row.revisions_included === 1 ? '' : 's'} remaining. To request a change, reply to the delivery email.</p>
        <p>This link is unique to you. Please do not forward it.</p>
      </div>`,
+  );
+}
+
+async function handleRevisionForm(req: Request): Promise<Response> {
+  if (!requestIsSameOrigin(req)) return fail('This request did not come from the delivery page.', 403);
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return unavailable();
+  }
+
+  if (String(form.get('action') ?? '') !== 'revision') return fail('Unknown action.');
+
+  const token = String(form.get('token') ?? new URL(req.url).searchParams.get('token') ?? '');
+  if (!TOKEN.test(token)) return unavailable();
+
+  const note = String(form.get('note') ?? '');
+  const admin = adminClient();
+
+  const { data, error } = await admin.rpc('request_delivery_revision', {
+    p_token_hash: await hashToken(token),
+    p_note: note,
+  });
+
+  if (error) {
+    return page(
+      'Revision not recorded',
+      `<div class="eyebrow">NOVA OS · delivery</div>
+       <h1>We could not record that request</h1>
+       <p class="bad">${escapeHtml(error.message)}</p>
+       <p>Reply to the delivery email and we will help directly.</p>`,
+      409,
+    );
+  }
+
+  const result = (Array.isArray(data) ? data[0] : data) as { revisionsRemaining?: number } | null;
+  const remaining = Number(result?.revisionsRemaining ?? 0);
+
+  return page(
+    'Revision requested',
+    `<div class="eyebrow">NOVA OS · delivery</div>
+     <h1>Thank you — the revision is with the studio</h1>
+     <p>We recorded your request. A new version will be prepared and checked, and we will email you when it is ready.</p>
+     <p class="muted">${remaining} revision${remaining === 1 ? '' : 's'} left on this order after this request.</p>`,
   );
 }
 
@@ -293,7 +399,13 @@ Deno.serve(async (req) => {
     return await renderDelivery(token);
   }
 
-  if (req.method === 'POST') return await mintLink(req);
+  if (req.method === 'POST') {
+    const contentType = req.headers.get('content-type') ?? '';
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      return await handleRevisionForm(req);
+    }
+    return await mintLink(req);
+  }
 
   return json({ ok: false, error: 'Use GET with a token or POST to mint.', version: SERVICE_VERSION }, 405);
 });

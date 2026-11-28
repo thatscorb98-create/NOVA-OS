@@ -39,6 +39,20 @@ function statusTone(status: CloudJobStatus): string {
   }
 }
 
+function cycleTone(status: 'action' | 'idle' | 'paused' | 'blocked' | 'error'): string {
+  switch (status) {
+    case 'action':
+      return colors.success;
+    case 'blocked':
+    case 'error':
+      return colors.danger;
+    case 'paused':
+      return colors.amber;
+    default:
+      return colors.textDim;
+  }
+}
+
 function Row({
   label,
   value,
@@ -377,6 +391,112 @@ export default function CloudScreen() {
               </AppText>
             </Panel>
           </FadeInView>
+
+          {cloud.loopSnapshot ? (
+            <FadeInView delay={140} style={{ marginTop: spacing.xxl }}>
+              <SectionHeader label="Autonomous loop" />
+              <Panel>
+                <AppText variant="caption">
+                  The scheduler queues one company cycle per minute while the company is not paused.
+                  Each cycle reviews the business and queues at most one action. It never creates a
+                  quote, a payment or a checkout, and it cannot buy or upgrade anything.
+                </AppText>
+
+                <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                  <StatBlock
+                    value={String(cloud.loopSnapshot.counts.dueFollowUps)}
+                    label="Due follow-ups"
+                    accent={colors.violetBright}
+                  />
+                  <StatBlock
+                    value={String(cloud.loopSnapshot.counts.approvedReady)}
+                    label="Approved mail"
+                    accent={colors.cyan}
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+                  <StatBlock
+                    value={String(cloud.loopSnapshot.counts.deliveriesUnsent)}
+                    label="To deliver"
+                    accent={colors.emerald}
+                  />
+                  <StatBlock
+                    value={String(cloud.loopSnapshot.counts.leadsWithoutOutreach)}
+                    label="Leads to draft"
+                    accent={colors.success}
+                  />
+                </View>
+
+                <View style={{ marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+                  <Row
+                    label="AI budget"
+                    value={
+                      cloud.loopSnapshot.aiBudgetCents === 0
+                        ? 'not funded — no paid AI spend'
+                        : `$${(cloud.loopSnapshot.aiSpendCents / 100).toFixed(2)} of $${(
+                            cloud.loopSnapshot.aiBudgetCents / 100
+                          ).toFixed(2)}`
+                    }
+                    color={
+                      cloud.loopSnapshot.aiRemainingCents > 0 ? colors.success : colors.textMuted
+                    }
+                  />
+                  <Row
+                    label="Last cycle"
+                    value={relativeFromIso(cloud.companyCycles[0]?.created_at)}
+                  />
+                </View>
+
+                <View style={{ marginTop: spacing.sm }}>
+                  <NeonButton
+                    label="Run company cycle"
+                    icon="sync-outline"
+                    onPress={() => void cloud.runCompanyCycle()}
+                    loading={cloud.busy === 'worker'}
+                  />
+                </View>
+
+                {cloud.companyCycles.length > 0 ? (
+                  <View style={{ marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+                    {cloud.companyCycles.slice(0, 5).map((cycle, index) => (
+                      <View
+                        key={cycle.id}
+                        style={{
+                          paddingVertical: spacing.sm + 2,
+                          borderTopWidth: index === 0 ? 0 : 1,
+                          borderTopColor: colors.hairline,
+                          gap: 2,
+                        }}
+                      >
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: spacing.xs + 2,
+                          }}
+                        >
+                          <StatusDot color={cycleTone(cycle.status)} size={5} />
+                          <AppText variant="micro" style={{ color: cycleTone(cycle.status), flex: 1 }}>
+                            {cycle.decision.replace(/_/g, ' ').toUpperCase()}
+                          </AppText>
+                          <AppText variant="micro">{relativeFromIso(cycle.created_at)}</AppText>
+                        </View>
+                        {cycle.status === 'blocked' && typeof cycle.detail.reason === 'string' ? (
+                          <AppText variant="micro" style={{ color: colors.amber, letterSpacing: 0 }}>
+                            {cycle.detail.reason}
+                          </AppText>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <AppText variant="micro" style={{ marginTop: spacing.md, letterSpacing: 0.4 }}>
+                    NO CYCLE HAS RUN YET. QUEUE ONE HERE OR LET THE SCHEDULER CALL IT.
+                  </AppText>
+                )}
+              </Panel>
+            </FadeInView>
+          ) : null}
 
           <FadeInView delay={150} style={{ marginTop: spacing.xxl }}>
             <SectionHeader label="Recent jobs" />

@@ -45,6 +45,7 @@ interface FollowUpRow {
   message_id: string;
   lead_id: string | null;
   contact_id: string | null;
+  kind: string;
   status: string;
   due_at: string;
   note: string | null;
@@ -139,6 +140,17 @@ export const echoDraftEmail: JobHandler = async (ctx: JobContext) => {
     throw new Error('That address is on the suppression list, so no draft was written.');
   }
 
+  const { data: blockedDeal } = await ctx.admin
+    .from('deals')
+    .select('stage')
+    .eq('owner_id', ownerId)
+    .eq('lead_id', leadId)
+    .maybeSingle();
+
+  if (blockedDeal?.stage === 'do_not_contact') {
+    throw new Error('That lead is marked do not contact, so no draft was written.');
+  }
+
   const { data: openMessages, error: openError } = await ctx.admin
     .from('outreach_messages')
     .select('id, status')
@@ -219,7 +231,7 @@ export const echoDraftFollowUp: JobHandler = async (ctx: JobContext) => {
 
   const { data: followUpData, error: followUpError } = await ctx.admin
     .from('follow_ups')
-    .select('id, message_id, lead_id, contact_id, status, due_at, note')
+    .select('id, message_id, lead_id, contact_id, kind, status, due_at, note')
     .eq('id', followUpId)
     .eq('owner_id', ownerId)
     .maybeSingle();
@@ -269,15 +281,52 @@ export const echoDraftFollowUp: JobHandler = async (ctx: JobContext) => {
     throw new Error('The company is paused, so no follow-up draft was written.');
   }
 
+  // A contact or lead preference can change between scheduling and drafting.
+  const { data: optedOut } = await ctx.admin
+    .from('contacts')
+    .select('id')
+    .eq('owner_id', ownerId)
+    .eq('email_normalized', original.to_email.trim().toLowerCase())
+    .eq('opted_out', true)
+    .limit(1)
+    .maybeSingle();
+
+  if (optedOut) {
+    throw new Error('That contact has opted out, so no follow-up is written.');
+  }
+
   let businessName = '';
   if (followUp.lead_id) {
     const { data: lead } = await ctx.admin
       .from('leads')
-      .select('business_name')
+      .select('business_name, status')
       .eq('id', followUp.lead_id)
       .eq('owner_id', ownerId)
       .maybeSingle();
+
+    const { data: deal } = await ctx.admin
+      .from('deals')
+      .select('stage')
+      .eq('owner_id', ownerId)
+      .eq('lead_id', followUp.lead_id)
+      .maybeSingle();
+
+    if (lead?.status === 'do_not_contact' || deal?.stage === 'do_not_contact') {
+      throw new Error('That lead is marked do not contact, so no follow-up is written.');
+    }
+
     businessName = (lead?.business_name as string | undefined) ?? '';
+  }
+
+  let deliveredTitle = '';
+  if (followUp.kind === 'recurring' || followUp.kind === 'receipt') {
+    const { data: delivered } = await ctx.admin
+      .from('deliverables')
+      .select('title')
+      .eq('owner_id', ownerId)
+      .eq('delivery_message_id', original.id)
+      .maybeSingle();
+    deliveredTitle = (delivered?.title as string | undefined) ?? '';
   }
 
   const first = original.to_name ? original.to_name.trim().split(/\s+/)[0] : null;
@@ -287,17 +336,32 @@ export const echoDraftFollowUp: JobHandler = async (ctx: JobContext) => {
     : `Re: ${original.subject}`
   ).slice(0, 160);
 
+  const subjectLine = deliveredTitle || businessName || 'the work';
+
+  const kindLine =
+    followUp.kind === 'receipt'
+      ? `I wanted to check that everything in ${subjectLine} opened correctly for you. If a file will not open or something looks wrong, reply and I will fix it.`
+      : followUp.kind === 'review'
+        ? `I hope ${subjectLine} is working well. If you have a moment, a short honest review would help other small businesses decide whether this is right for them. No pressure, and no incentive — just your own words.`
+        : followUp.kind === 'recurring'
+          ? `${subjectLine} has been live for a while. If you would like it refreshed for the season or updated with new offers, I can put that together. I will not assume a schedule or a price — tell me what you need and I will quote it before anything starts.`
+          : businessName
+            ? `Just following up on my note about ${businessName}. If it would help, I can send the details and you can decide from there.`
+            : 'Just following up on my note. If it would help, I can send the details and you can decide from there.';
+
   const body = [
     `Hi ${greeting},`,
     '',
-    businessName
-      ? `Just following up on my note about ${businessName}. If it would help, I can send the details and you can decide from there.`
-      : 'Just following up on my note. If it would help, I can send the details and you can decide from there.',
+    kindLine,
     '',
-    'If now is not the time, just reply "not now" and I will close the loop.',
-    '',
-    'Thanks,',
-    settings.company_name,
+    ...(followUp.kind === 'receipt'
+      ? ['Thanks,', settings.company_name]
+      : [
+          'If now is not the time, just reply "not now" and I will close the loop.',
+          '',
+          'Thanks,',
+          settings.company_name,
+        ]),
     '',
     'If you would rather not hear from me, reply "unsubscribe" and I will remove this address.',
   ].join('\n');
@@ -331,9 +395,10 @@ export const echoDraftFollowUp: JobHandler = async (ctx: JobContext) => {
   await ctx.log('info', `Follow-up draft prepared for ${original.to_email} (not sent).`, {
     followUpId,
     messageId: inserted.id,
+    kind: followUp.kind,
   });
 
-  return { followUpId, messageId: inserted.id, status: 'draft', sent: false };
+  return { followUpId, messageId: inserted.id, kind: followUp.kind, status: 'draft', sent: false };
 };
 
 interface ReplyEventRow {

@@ -2,7 +2,7 @@
   "expo": {
     "name": "NOVA OS",
     "slug": "nova-os",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "orientation": "portrait",
     "scheme": "novaos",
     "icon": "./assets/icon.png",
@@ -11,7 +11,7 @@
     "primaryColor": "#8B5CF6",
     "android": {
       "package": "com.novaos.app",
-      "versionCode": 4,
+      "versionCode": 5,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.INTERNET",

@@ -23,9 +23,9 @@ Last updated 2026-11-28.
 | 4 — Sales pipeline and quotes | Done | `docs/phase-4-quotes.md` |
 | 5 — Stripe | Done; test mode only, live mode off | `docs/phase-5-stripe.md` |
 | 6 — Production studio | Done; files generated, stored and QA-checked | `docs/phase-6-studio.md` |
-| 7 — Delivery and retention | Done; private links, delivery email, revision re-production, retention and history | `docs/phase-7-delivery.md` |
-| 8 — Autonomous company loop | **Next — not started** | — |
-| 9 — Audit and dry-run | Not started | — |
+| 7 — Delivery and retention | Done; private links, delivery email, revision re-production, receipt/review/recurring retention, customer revisions from the link, revocation and history | `docs/phase-7-delivery.md` |
+| 8 — Autonomous company loop | Done; scheduler-driven `nova.orchestrate`, one gated action per cycle, company-cycle checkpoints and the AI spending cap | `docs/phase-8-autonomy.md` |
+| 9 — Audit and dry-run | **Next — not started** | — |
 
 Update this table when a phase completes. A phase is done only when its
 checks were actually executed and its evidence page exists.

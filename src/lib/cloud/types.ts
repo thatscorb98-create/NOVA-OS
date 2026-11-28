@@ -435,6 +435,16 @@ export interface CloudDeliverable {
   created_at: string;
 }
 
+export interface CloudDeliveryLink {
+  id: string;
+  deliverable_id: string;
+  expires_at: string;
+  revoked_at: string | null;
+  access_count: number;
+  last_accessed_at: string | null;
+  created_at: string;
+}
+
 export interface CloudCustomerHistory {
   lead_id: string;
   business_name: string;
@@ -478,6 +488,60 @@ export const FOLLOW_UP_STATUS_LABEL: Record<FollowUpStatus, string> = {
   cancelled: 'CANCELLED',
   skipped: 'SKIPPED',
 };
+
+/* -------------------------------------------------------------- Phase 8 loop */
+
+export type CompanyCycleStatus = 'action' | 'idle' | 'paused' | 'blocked' | 'error';
+
+export interface CloudCompanyCycle {
+  id: string;
+  cycle_key: string;
+  status: CompanyCycleStatus;
+  decision: string;
+  detail: Record<string, unknown>;
+  job_id: string | null;
+  created_at: string;
+}
+
+export interface CloudLoopSnapshot {
+  mode: AutonomyMode;
+  emailEnabled: boolean;
+  discoveryEnabled: boolean;
+  productionEnabled: boolean;
+  dailyLeadCap: number;
+  dailyEmailCap: number;
+  aiBudgetCents: number;
+  aiSpendCents: number;
+  aiRemainingCents: number;
+  counts: {
+    leadsTotal: number;
+    leadsQualified: number;
+    leadsToday: number;
+    leadsWithoutOutreach: number;
+    draftsPending: number;
+    approvedReady: number;
+    dueFollowUps: number;
+    repliesUndrafted: number;
+    dealsReady: number;
+    productionQueued: number;
+    productionReady: number;
+    deliveriesUnsent: number;
+    deliveredWithoutPlan: number;
+    jobsQueued: number;
+    jobsDead: number;
+    ordersPaid: number;
+  };
+  next: {
+    followUpId: string | null;
+    replyEventId: number | null;
+    production: { jobId: string; version: number } | null;
+    delivery: { jobId: string; deliverableId: string } | null;
+    approvedMessageId: string | null;
+    leadId: string | null;
+    deliveredMessageId: string | null;
+  };
+  serverTime: string;
+}
 
 /* -------------------------------------------------------------- Phase 6 studio */
 

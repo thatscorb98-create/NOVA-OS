@@ -4,9 +4,11 @@ import type { MemoryRecord } from '@/types/nova';
 import type {
   AutonomyMode,
   CloudCatalogService,
+  CloudCompanyCycle,
   CloudCustomerHistory,
   CloudDeal,
   CloudDeliverable,
+  CloudDeliveryLink,
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
@@ -16,6 +18,7 @@ import type {
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudLoopSnapshot,
   CloudOrder,
   CloudProductionFile,
   CloudProductionJob,
@@ -785,6 +788,34 @@ export async function enqueueDeliveryEmail(
   return job?.id ?? null;
 }
 
+/** The app can see every link it minted, including its access count, after a restart. */
+export async function loadDeliveryLinks(
+  client: SupabaseClient,
+  limit = 40,
+): Promise<CloudDeliveryLink[]> {
+  const { data, error } = await client
+    .from('delivery_links')
+    .select('id, deliverable_id, expires_at, revoked_at, access_count, last_accessed_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudDeliveryLink[];
+}
+
+/** Withdraw every live link for a delivery without needing the old link id. */
+export async function revokeDeliverableLinks(
+  client: SupabaseClient,
+  deliverableId: string,
+): Promise<number> {
+  const { data, error } = await client.rpc('revoke_delivery_links', {
+    p_deliverable_id: deliverableId,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+  return typeof data === 'number' ? data : 0;
+}
+
 export async function loadCustomerHistory(
   client: SupabaseClient,
   limit = 50,
@@ -831,6 +862,68 @@ export async function scheduleFollowUp(
 export async function cancelFollowUp(client: SupabaseClient, id: string): Promise<void> {
   const { error } = await client.rpc('cancel_follow_up', { p_id: id });
   if (error) throw new Error(describeCloudError(error));
+}
+
+/**
+ * Schedule the receipt, review and recurring-service checks for a delivered
+ * message. The database re-checks opt-outs and is idempotent per kind.
+ */
+export async function scheduleDeliveryFollowUps(
+  client: SupabaseClient,
+  messageId: string,
+): Promise<string[]> {
+  const { data, error } = await client.rpc('schedule_delivery_follow_ups', {
+    p_message_id: messageId,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const summary = (Array.isArray(data) ? data[0] : data) as
+    | { scheduled?: unknown; skipped?: string | null }
+    | null;
+
+  if (summary?.skipped === 'opt_out') return [];
+  return Array.isArray(summary?.scheduled)
+    ? summary.scheduled.filter((kind): kind is string => typeof kind === 'string')
+    : [];
+}
+
+/* -------------------------------------------------------------- Phase 8 loop */
+
+export async function loadCompanyCycles(
+  client: SupabaseClient,
+  limit = 12,
+): Promise<CloudCompanyCycle[]> {
+  const { data, error } = await client
+    .from('company_cycles')
+    .select('id, cycle_key, status, decision, detail, job_id, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudCompanyCycle[];
+}
+
+export async function loadLoopSnapshot(client: SupabaseClient): Promise<CloudLoopSnapshot> {
+  const { data, error } = await client.rpc('nova_loop_snapshot', { p_owner_id: null });
+  if (error) throw new Error(describeCloudError(error));
+  if (!data) throw new Error('The company loop snapshot was empty.');
+  return data as CloudLoopSnapshot;
+}
+
+/** Queue one cycle now. The worker still runs it; this only asks for the cycle. */
+export async function enqueueCompanyCycle(client: SupabaseClient): Promise<string | null> {
+  const key = `nova_loop:manual:${Date.now()}`;
+  const { data, error } = await client.rpc('enqueue_agent_job', {
+    p_kind: 'nova.orchestrate',
+    p_payload: { manual: true, cycleKey: key },
+    p_idempotency_key: key,
+    p_priority: 120,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+  const job = (Array.isArray(data) ? data[0] : data) as { id?: string } | null;
+  return job?.id ?? null;
 }
 
 /* -------------------------------------------------------------- Phase 6 studio */
