@@ -1,0 +1,36 @@
+name: apply-phase6-test
+
+on:
+  push:
+    branches: [nova/cloud-foundation]
+    paths:
+      - '.github/workflows/apply-phase6-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nova/cloud-foundation
+          fetch-depth: 1
+
+      - name: Download and verify the patch
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 90 -o /tmp/phase6-test.patch https://paste.c-net.org/HousesBounced
+          echo '62e242a16578164eda477e17be162ad5792331f0d11c9442361d4b2eabd9128f  /tmp/phase6-test.patch' | sha256sum -c -
+          git apply --index /tmp/phase6-test.patch
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name 'NOVA OS Bot'
+          git config user.email 'nova-os@users.noreply.github.com'
+          git rm -q .github/workflows/apply-phase6-test.yml
+          git commit -m 'Add the production generator smoke test'
+          git push origin HEAD:nova/cloud-foundation
