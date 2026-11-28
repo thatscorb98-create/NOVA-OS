@@ -72,7 +72,9 @@ refreshed, without assuming a schedule, scope or price.
 
 Each kind is unique per message while open, and repeating the call only adds the
 kinds that are missing. The database refuses to schedule when the address is
-suppressed, the contact has opted out or the lead is `do_not_contact`. The Phase
+suppressed, the contact has opted out or the lead's deal is `do_not_contact`;
+that refusal is stored once as three `skipped` rows so the autonomous loop does
+not offer the same plan every minute. The Phase
 3 rules still apply: a reply, bounce or suppression cancels **every** open kind,
 and a due follow-up becomes an owner-approved draft — it is never sent
 automatically. The draft copy differs by kind and always carries the opt-out
@@ -85,8 +87,8 @@ to authenticated only.
 
 ## Checks
 
-- Fresh local Postgres, all migrations: **112 assertions passed, 0 failed** (86
-  through Phase 7 + 26 covering the Phase 7 completion and Phase 8 snapshot:
+- Fresh local Postgres, all migrations: **114 assertions passed, 0 failed** (86
+  through Phase 7 + 28 covering the Phase 7 completion and Phase 8 snapshot:
   receipt/review/recurring scheduling, idempotency, opt-out cancellation,
   customer revision from a token, expiry, link revocation, company cycles and the
   AI budget). The earlier 86 cover link minting, token resolution, revocation,

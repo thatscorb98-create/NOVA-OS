@@ -184,6 +184,32 @@ begin
          and d.lead_id = v_message.lead_id
          and d.stage = 'do_not_contact'
      ) then
+    -- Record the decision once, so the autonomous loop does not keep offering
+    -- the same plan to a customer who opted out. A skipped row is not open, so
+    -- the owner can still schedule a plan later if the preference changes.
+    foreach v_kind in array array['receipt', 'review', 'recurring'] loop
+      if not exists (
+        select 1 from public.follow_ups
+        where owner_id = v_owner
+          and message_id = v_message.id
+          and kind = v_kind
+      ) then
+        insert into public.follow_ups (
+          owner_id, message_id, lead_id, contact_id, kind, status, due_at, note
+        )
+        values (
+          v_owner,
+          v_message.id,
+          v_message.lead_id,
+          v_message.contact_id,
+          v_kind,
+          'skipped',
+          now() + interval '1 day',
+          'Skipped: the customer opted out or is marked do not contact.'
+        );
+      end if;
+    end loop;
+
     return jsonb_build_object(
       'scheduled', '[]'::jsonb,
       'skipped', 'opt_out',

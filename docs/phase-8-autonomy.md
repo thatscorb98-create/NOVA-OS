@@ -13,7 +13,8 @@ already has a queued or running cycle. Nothing on the phone is required.
 
 Each cycle:
 
-1. calls `nova_loop_snapshot()` — one owner-scoped read of settings, queue, CRM,
+1. calls `nova_loop_snapshot(p_owner_id)` (the worker passes the owner; an app
+   session may only omit it for its own account) — one owner-scoped read of settings, queue, CRM,
    deals, email, production, delivery, orders and retention state;
 2. chooses **one** next action in this order;
 3. enqueues that action with an idempotency key;
@@ -58,7 +59,9 @@ cascade into several downstream actions, and the next cycle sees the result.
 ## Data
 
 `company_cycles` is the loop's checkpoint trail, unique on
-`(owner_id, cycle_key)`, readable by its owner only.
+`(owner_id, cycle_key)`, readable by its owner only. Send and delivery keys
+include the UTC day, so a daily email cap reached today can be tried again
+tomorrow instead of leaving a dead job for that message forever.
 
 `nova_loop_snapshot()` is `security definer` but every count and every `next`
 id filters `owner_id = auth.uid()`. It returns the mode, feature switches, caps,
@@ -73,11 +76,12 @@ and drains the queue. The **Company mode** chips stop the loop at `paused`.
 
 ## Checks
 
-- Fresh local Postgres, all migrations: **112 assertions passed, 0 failed**
-  (86 existing + 26 new). The new assertions cover:
+- Fresh local Postgres, all migrations: **114 assertions passed, 0 failed**
+  (86 existing + 28 new). The new assertions cover:
   - receipt, review and recurring follow-ups scheduled from a sent delivery;
   - one per kind, idempotent re-scheduling, another owner refused;
-  - suppression cancelling all three kinds, and re-scheduling after it is lifted;
+  - suppression cancelling all three kinds, re-scheduling after it is lifted, and
+    a skipped plan recorded for an opted-out customer;
   - customer revision from a hashed delivery token, note and revision count
     stored, expired link refused, a second open revision refused;
   - revoking every live link for a delivery and another owner refused;

@@ -102,7 +102,10 @@ export const novaOrchestrate: JobHandler = async (ctx: JobContext) => {
     throw new Error('The company snapshot was empty.');
   }
 
+  const day = new Date(snapshot.serverTime).toISOString().slice(0, 10);
+
   const detail = {
+    day,
     mode: snapshot.mode,
     counts: snapshot.counts,
     aiBudgetCents: snapshot.aiBudgetCents,
@@ -164,7 +167,7 @@ export const novaOrchestrate: JobHandler = async (ctx: JobContext) => {
       return act(
         'relay.send_delivery',
         { deliverableId: snapshot.next.delivery.deliverableId },
-        `loop:delivery:${snapshot.next.delivery.deliverableId}`,
+        `loop:delivery:${snapshot.next.delivery.deliverableId}:${day}`,
         60,
         'deliver_work',
       );
@@ -190,7 +193,7 @@ export const novaOrchestrate: JobHandler = async (ctx: JobContext) => {
       return act(
         'relay.send_email',
         { messageId: snapshot.next.approvedMessageId },
-        `loop:send:${snapshot.next.approvedMessageId}`,
+        `loop:send:${snapshot.next.approvedMessageId}:${day}`,
         70,
         'send_approved_email',
       );
@@ -225,7 +228,6 @@ export const novaOrchestrate: JobHandler = async (ctx: JobContext) => {
     snapshot.dailyLeadCap > 0 &&
     snapshot.counts.leadsToday < snapshot.dailyLeadCap
   ) {
-    const day = new Date(snapshot.serverTime).toISOString().slice(0, 10);
     return act(
       'atlas.discover',
       { scheduledBy: 'nova.orchestrate', day },
