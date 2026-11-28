@@ -2,6 +2,20 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.6.2] — 2026-11-28
+
+Eighth Android release (`versionCode` 8). Installability fix for the sideloaded
+build.
+
+### Fixed
+
+- **Native ABIs.** The APK now carries arm64-v8a, armeabi-v7a and x86_64
+  libraries instead of arm64 only, so it installs on 32-bit phones and
+  emulators as well as 64-bit phones.
+- **Download integrity.** The workflow verifies the APK signature with
+  `apksigner` before publishing and attaches a `nova-os.zip` copy for browsers
+  that truncate large direct downloads.
+
 ## [0.6.1] — 2026-11-28
 
 Seventh Android release (`versionCode` 7).
