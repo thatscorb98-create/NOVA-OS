@@ -151,7 +151,7 @@ No computer is required. The repository carries a free cloud build (`.github/wor
 5. Unzip the download with the Files app or ZArchiver — it contains `nova-os.apk`.
 6. Tap the APK. Android asks once for permission to install unknown apps: allow it for the app you opened the file from, then tap **Install**.
 
-Each run signs with the runner's own debug keystore. If Android refuses an update from an earlier NOVA build, uninstall the old app first — that also clears its local missions and memory. The universal APK is about 72 MB; if a phone browser leaves you with an invalid package, download `nova-os.zip` from the same release instead, extract it and install the APK inside.
+Builds are signed with a repository keystore stored in GitHub Actions secrets, so the certificate is the same on every run and a newer APK installs straight over an older one. The one exception is the debug-signed 0.6.2 build: uninstall it once. The workflow also installs, launches and replaces the APK on a clean Android 14 emulator before publishing; a package that cannot install is never released. The universal APK is about 72 MB; if a phone browser leaves you with an invalid package, download `nova-os.zip` from the same release instead, extract it and install the APK inside.
 
 ### Option B — EAS Build (Expo's free tier)
 
@@ -168,14 +168,18 @@ npx eas-cli@latest build --platform android --profile preview
 | --- | --- |
 | App name | NOVA OS |
 | Package | `com.novaos.app` |
-| Version / code | `0.6.2` / `8` (`versionCode` in `app.json`) |
+| Version / code | `0.6.3` / `9` (`versionCode` in `app.json`) |
 | Permissions | `INTERNET`, `VIBRATE` — nothing else is requested |
 | Icon | 512×512 (above every Android density bucket), plus adaptive foreground and monochrome layers on `#04050A` |
 | Splash | Generated mark on `#04050A`, 220 px wide, dark mode identical |
 | Secure storage | `expo-secure-store`, Android Keystore, excluded from cloud backup |
-| Signing | Debug keystore from the Expo template (sideloading only, not Play Store) |
+| Signing | Stable repository keystore from GitHub Actions secrets (sideloading only, not Play Store) |
 
 The APK is self-contained: the JavaScript bundle and fonts are inside it, so it runs without Metro. Only model requests need a connection.
+
+### Release signing
+
+The release build reads its keystore from repository secrets: `ANDROID_KEYSTORE_BASE64` (a base64 PKCS#12 file), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `ANDROID_SIGNING_CERT_SHA256`, the expected certificate fingerprint. `scripts/configure-android-signing.mjs` points the generated Gradle release build at that keystore, and the workflow refuses to publish an APK whose certificate does not match the fingerprint. Rotating the key means replacing all five secrets; the first APK from a new key needs one uninstall.
 
 Bump `android.versionCode` in `app.json` before each new release you hand out; Android installs an update only when the version code is higher.
 
