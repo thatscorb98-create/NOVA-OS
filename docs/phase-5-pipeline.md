@@ -64,6 +64,8 @@ past one page.
 - No inbox sync. The provider must POST to the webhook; the app does not poll a
   mailbox, and AgentMail's inbound payload has not been verified against a live
   key.
-- No automatic replies, follow-up sequencing or reply drafting.
+- No automatic sending. Replies can be turned into an owner-approved
+  `closer.draft_reply` draft, and follow-ups can be scheduled and cancelled, but
+  every draft waits for approval and every send re-checks the provider gates.
 - No production automation. Delivery tracking is Phase 6
   ([`phase-6-production.md`](phase-6-production.md)).

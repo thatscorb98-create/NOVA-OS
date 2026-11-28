@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -17,6 +17,8 @@ import {
   type DealStage,
   type ReplyIntent,
 } from '@/lib/cloud/types';
+import { describeCloudError } from '@/lib/cloud/api';
+import { getSupabase } from '@/lib/cloud/client';
 import { formatRelative } from '@/lib/time';
 import { useCloud } from '@/store/cloud-store';
 import { colors, radius, spacing } from '@/theme';
@@ -142,7 +144,17 @@ function DealRow({
   );
 }
 
-function ReplyRow({ reply, subject }: { reply: CloudReply; subject: string | null }) {
+function ReplyRow({
+  reply,
+  subject,
+  drafting,
+  onDraft,
+}: {
+  reply: CloudReply;
+  subject: string | null;
+  drafting: boolean;
+  onDraft: () => void;
+}) {
   const intent = (reply.intent ?? 'other') as ReplyIntent;
 
   const tone =
@@ -175,6 +187,18 @@ function ReplyRow({ reply, subject }: { reply: CloudReply; subject: string | nul
           reply.detail ? ` · ${reply.detail}` : ''
         }`}
       </AppText>
+
+      {intent !== 'unsubscribe' ? (
+        <Pressable
+          onPress={onDraft}
+          disabled={drafting}
+          style={({ pressed }) => ({ opacity: drafting ? 0.5 : pressed ? 0.7 : 1, paddingVertical: 2 })}
+        >
+          <AppText variant="micro" style={{ color: colors.cyan, letterSpacing: 0.6 }}>
+            {drafting ? 'QUEUEING' : 'DRAFT A REPLY'}
+          </AppText>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -182,6 +206,29 @@ function ReplyRow({ reply, subject }: { reply: CloudReply; subject: string | nul
 export default function PipelineScreen() {
   const cloud = useCloud();
   const router = useRouter();
+
+  const [draftingId, setDraftingId] = useState<number | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  const draftReply = async (reply: CloudReply) => {
+    const client = getSupabase();
+    if (!client) return;
+    setDraftingId(reply.id);
+    setDraftError(null);
+    try {
+      const { error } = await client.rpc('enqueue_agent_job', {
+        p_kind: 'closer.draft_reply',
+        p_payload: { eventId: reply.id },
+        p_idempotency_key: `reply:${reply.id}`,
+      });
+      if (error) throw error;
+      await cloud.refresh();
+    } catch (thrown) {
+      setDraftError(describeCloudError(thrown));
+    } finally {
+      setDraftingId(null);
+    }
+  };
 
   const businessName = (id: string | null): string | null => {
     if (!id) return null;
@@ -284,14 +331,22 @@ export default function PipelineScreen() {
                 key={reply.id}
                 reply={reply}
                 subject={subjectFor(reply.message_id)}
+                drafting={draftingId === reply.id}
+                onDraft={() => void draftReply(reply)}
               />
             ))
           )}
         </Panel>
         <AppText variant="micro" style={{ marginTop: spacing.sm, letterSpacing: 0.3, color: colors.textDim }}>
           The intent label is a keyword hint derived from the reply text, not a claim about what the
-          customer meant. Read the reply before acting on it.
+          customer meant. Read the reply before acting on it. A drafted reply is written from the
+          lead&apos;s stored facts and waits in Outreach for your approval.
         </AppText>
+        {draftError ? (
+          <AppText variant="caption" style={{ color: colors.amber, marginTop: spacing.sm }}>
+            {draftError}
+          </AppText>
+        ) : null}
       </FadeInView>
 
       {closed.length > 0 ? (

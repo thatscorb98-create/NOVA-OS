@@ -24,6 +24,8 @@ interface QuoteRow {
   lead_id: string | null;
   title: string;
   scope: string;
+  deliverables: string;
+  terms: string;
   amount_cents: number;
   currency: string;
   status: string;
@@ -110,7 +112,7 @@ async function loadQuote(quoteId: string): Promise<QuoteRow | null> {
   const { data, error } = await admin
     .from('quotes')
     .select(
-      'id, owner_id, lead_id, title, scope, amount_cents, currency, status, delivery_days, expires_at, accepted_at',
+      'id, owner_id, lead_id, title, scope, deliverables, terms, amount_cents, currency, status, delivery_days, expires_at, accepted_at',
     )
     .eq('id', quoteId)
     .maybeSingle();
@@ -138,6 +140,8 @@ ${name ? `<div class="business">${escapeHtml(name)}</div>` : ''}
 <div class="meta">Delivery in ${quote.delivery_days} day(s) · ${escapeHtml(quote.currency.toUpperCase())}</div>
 ${expiry}
 ${quote.scope ? `<div class="scope">${escapeHtml(quote.scope)}</div>` : ''}
+${quote.deliverables ? `<div class="scope"><strong>Deliverables</strong><br>${escapeHtml(quote.deliverables)}</div>` : ''}
+${quote.terms ? `<div class="scope"><strong>Terms</strong><br>${escapeHtml(quote.terms)}</div>` : ''}
 ${action}
 <div class="note">Accepting records your agreement to this offer. No payment is taken on this page and no card details are requested.</div>`;
 }

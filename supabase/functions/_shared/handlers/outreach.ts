@@ -40,6 +40,16 @@ interface ContactRow {
   opted_out: boolean;
 }
 
+interface FollowUpRow {
+  id: string;
+  message_id: string;
+  lead_id: string | null;
+  contact_id: string | null;
+  status: string;
+  due_at: string;
+  note: string | null;
+}
+
 async function loadSettings(ctx: JobContext): Promise<SettingsRow> {
   const { data, error } = await ctx.admin
     .from('business_settings')
@@ -199,6 +209,284 @@ export const echoDraftEmail: JobHandler = async (ctx: JobContext) => {
   });
 
   return { messageId: inserted.id, subject: inserted.subject, status: 'draft', sent: false };
+};
+
+export const echoDraftFollowUp: JobHandler = async (ctx: JobContext) => {
+  const ownerId = ctx.job.owner_id;
+  const followUpId =
+    typeof ctx.job.payload.followUpId === 'string' ? ctx.job.payload.followUpId : '';
+  if (!followUpId) throw new Error('echo.draft_follow_up needs a followUpId.');
+
+  const { data: followUpData, error: followUpError } = await ctx.admin
+    .from('follow_ups')
+    .select('id, message_id, lead_id, contact_id, status, due_at, note')
+    .eq('id', followUpId)
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+
+  if (followUpError) throw new Error(`Could not load the follow-up: ${followUpError.message}`);
+  const followUp = followUpData as FollowUpRow | null;
+  if (!followUp) throw new Error('That follow-up no longer exists for this owner.');
+  if (followUp.status !== 'scheduled') return { skipped: true, reason: followUp.status };
+
+  if (Date.parse(followUp.due_at) > Date.now()) {
+    throw new Error('This follow-up is not due yet.');
+  }
+
+  const { data: originalData, error: originalError } = await ctx.admin
+    .from('outreach_messages')
+    .select('id, status, to_email, to_name, subject, lead_id')
+    .eq('id', followUp.message_id)
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+
+  if (originalError) throw new Error(`Could not load the original message: ${originalError.message}`);
+  const original = originalData as {
+    id: string;
+    status: string;
+    to_email: string;
+    to_name: string | null;
+    subject: string;
+    lead_id: string | null;
+  } | null;
+
+  if (!original) throw new Error('The original message no longer exists.');
+  if (original.status !== 'sent') {
+    throw new Error(`The original message is "${original.status}", so no follow-up is written.`);
+  }
+
+  const { data: suppressed, error: suppressionError } = await ctx.admin.rpc('is_email_suppressed', {
+    p_owner: ownerId,
+    p_email: original.to_email,
+  });
+  if (suppressionError) throw new Error(`Could not check suppression: ${suppressionError.message}`);
+  if (suppressed === true) {
+    throw new Error('That address is suppressed, so no follow-up is written.');
+  }
+
+  const settings = await loadSettings(ctx);
+  if (settings.autonomy_mode === 'paused') {
+    throw new Error('The company is paused, so no follow-up draft was written.');
+  }
+
+  let businessName = '';
+  if (followUp.lead_id) {
+    const { data: lead } = await ctx.admin
+      .from('leads')
+      .select('business_name')
+      .eq('id', followUp.lead_id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+    businessName = (lead?.business_name as string | undefined) ?? '';
+  }
+
+  const first = original.to_name ? original.to_name.trim().split(/\s+/)[0] : null;
+  const greeting = first && first.length >= 2 ? first : 'there';
+  const subject = (original.subject.toLowerCase().startsWith('re:')
+    ? original.subject
+    : `Re: ${original.subject}`
+  ).slice(0, 160);
+
+  const body = [
+    `Hi ${greeting},`,
+    '',
+    businessName
+      ? `Just following up on my note about ${businessName}. If it would help, I can send the details and you can decide from there.`
+      : 'Just following up on my note. If it would help, I can send the details and you can decide from there.',
+    '',
+    'If now is not the time, just reply "not now" and I will close the loop.',
+    '',
+    'Thanks,',
+    settings.company_name,
+    '',
+    'If you would rather not hear from me, reply "unsubscribe" and I will remove this address.',
+  ].join('\n');
+
+  const { data: inserted, error: insertError } = await ctx.admin
+    .from('outreach_messages')
+    .insert({
+      owner_id: ownerId,
+      lead_id: original.lead_id,
+      contact_id: followUp.contact_id,
+      to_email: original.to_email,
+      to_name: original.to_name,
+      subject,
+      body,
+      status: 'draft',
+      idempotency_key: `followup:${followUpId}`,
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    if (insertError.code === '23505') return { skipped: true, reason: 'follow_up_draft_exists' };
+    throw new Error(`Could not store the follow-up draft: ${insertError.message}`);
+  }
+
+  await ctx.admin.rpc('mark_follow_up_drafted', {
+    p_id: followUpId,
+    p_draft_message_id: inserted.id,
+  });
+
+  await ctx.log('info', `Follow-up draft prepared for ${original.to_email} (not sent).`, {
+    followUpId,
+    messageId: inserted.id,
+  });
+
+  return { followUpId, messageId: inserted.id, status: 'draft', sent: false };
+};
+
+interface ReplyEventRow {
+  id: number;
+  message_id: string | null;
+  kind: string;
+  intent: string | null;
+  detail: string | null;
+}
+
+/**
+ * CLOSER's routine reply draft.
+ *
+ * A reply draft is built from the stored reply label and the lead's own facts,
+ * never from instructions inside the reply. It is a draft: the owner approves
+ * it, and every send still passes the same gates as any other email. An opt-out
+ * or suppression ends the conversation instead of drafting a reply.
+ */
+export const closerDraftReply: JobHandler = async (ctx: JobContext) => {
+  const ownerId = ctx.job.owner_id;
+  const eventId = Number(ctx.job.payload.eventId);
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    throw new Error('closer.draft_reply needs an eventId.');
+  }
+
+  const { data: eventData, error: eventError } = await ctx.admin
+    .from('email_events')
+    .select('id, message_id, kind, intent, detail')
+    .eq('id', eventId)
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+
+  if (eventError) throw new Error(`Could not load the reply: ${eventError.message}`);
+  const event = eventData as ReplyEventRow | null;
+  if (!event) throw new Error('That reply no longer exists for this owner.');
+  if (event.kind !== 'replied') throw new Error('That event is not a reply.');
+  if (!event.message_id) throw new Error('The reply is not attached to a message.');
+  if (event.intent === 'unsubscribe') {
+    throw new Error('The customer opted out; no reply is drafted.');
+  }
+
+  const { data: originalData, error: originalError } = await ctx.admin
+    .from('outreach_messages')
+    .select('id, to_email, to_name, subject, lead_id, contact_id')
+    .eq('id', event.message_id)
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+
+  if (originalError) throw new Error(`Could not load the message: ${originalError.message}`);
+  const original = originalData as {
+    id: string;
+    to_email: string;
+    to_name: string | null;
+    subject: string;
+    lead_id: string | null;
+    contact_id: string | null;
+  } | null;
+
+  if (!original) throw new Error('The original message no longer exists.');
+
+  const { data: suppressed } = await ctx.admin.rpc('is_email_suppressed', {
+    p_owner: ownerId,
+    p_email: original.to_email,
+  });
+  if (suppressed === true) {
+    throw new Error('That address is suppressed, so no reply is drafted.');
+  }
+
+  const { data: openMessages } = await ctx.admin
+    .from('outreach_messages')
+    .select('id')
+    .eq('owner_id', ownerId)
+    .eq('to_email', original.to_email)
+    .in('status', ['draft', 'approved', 'sending'])
+    .limit(1);
+
+  if ((openMessages ?? []).length > 0) {
+    return { skipped: true, reason: 'open_message_exists' };
+  }
+
+  const settings = await loadSettings(ctx);
+  if (settings.autonomy_mode === 'paused') {
+    throw new Error('The company is paused, so no reply was drafted.');
+  }
+
+  let businessName = '';
+  if (original.lead_id) {
+    const { data: lead } = await ctx.admin
+      .from('leads')
+      .select('business_name')
+      .eq('id', original.lead_id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+    businessName = (lead?.business_name as string | undefined) ?? '';
+  }
+
+  const first = original.to_name ? original.to_name.trim().split(/\s+/)[0] : null;
+  const greeting = first && first.length >= 2 ? first : 'there';
+  const intent = event.intent ?? 'other';
+
+  const intentLine =
+    intent === 'not_interested'
+      ? 'Thanks for letting me know. I will close the loop and will not follow up again.'
+      : intent === 'interested' || intent === 'question'
+        ? businessName
+          ? `Thanks for getting back to me about ${businessName}. I can set out the scope, price and timing in writing so you can decide without pressure. What is the best way to reach you?`
+          : 'Thanks for getting back to me. I can set out the scope, price and timing in writing so you can decide without pressure. What is the best way to reach you?'
+        : 'Thanks for the reply. Tell me what you need and I will answer directly.';
+
+  const body = [
+    `Hi ${greeting},`,
+    '',
+    intentLine,
+    '',
+    'Thanks,',
+    settings.company_name,
+    '',
+    'If you would rather not hear from me, reply "unsubscribe" and I will remove this address.',
+  ].join('\n');
+
+  const subject = (original.subject.toLowerCase().startsWith('re:')
+    ? original.subject
+    : `Re: ${original.subject}`
+  ).slice(0, 160);
+
+  const { data: inserted, error: insertError } = await ctx.admin
+    .from('outreach_messages')
+    .insert({
+      owner_id: ownerId,
+      lead_id: original.lead_id,
+      contact_id: original.contact_id,
+      to_email: original.to_email,
+      to_name: original.to_name,
+      subject,
+      body,
+      status: 'draft',
+      idempotency_key: `reply:${eventId}`,
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    if (insertError.code === '23505') return { skipped: true, reason: 'reply_draft_exists' };
+    throw new Error(`Could not store the reply draft: ${insertError.message}`);
+  }
+
+  await ctx.log('info', `CLOSER prepared a reply for ${original.to_email} (not sent).`, {
+    eventId,
+    messageId: inserted.id,
+    intent,
+  });
+
+  return { eventId, messageId: inserted.id, intent, status: 'draft', sent: false };
 };
 
 export const relaySendEmail: JobHandler = async (ctx: JobContext) => {

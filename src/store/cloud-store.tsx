@@ -128,6 +128,8 @@ interface CloudContextValue {
     leadId: string;
     title: string;
     scope: string;
+    deliverables?: string;
+    terms?: string;
     amountCents: number;
     deliveryDays: number;
     expiresInDays: number;
@@ -700,6 +702,8 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       leadId: string;
       title: string;
       scope: string;
+      deliverables?: string;
+      terms?: string;
       amountCents: number;
       deliveryDays: number;
       expiresInDays: number;

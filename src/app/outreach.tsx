@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -10,7 +10,16 @@ import { NeonButton } from '@/components/ui/NeonButton';
 import { Panel, SectionHeader } from '@/components/ui/Panel';
 import { Screen } from '@/components/ui/Screen';
 import {
+  cancelFollowUp,
+  describeCloudError,
+  loadFollowUps,
+  scheduleFollowUp,
+} from '@/lib/cloud/api';
+import { getSupabase } from '@/lib/cloud/client';
+import {
+  FOLLOW_UP_STATUS_LABEL,
   OUTREACH_STATUS_LABEL,
+  type CloudFollowUp,
   type CloudOutreachMessage,
   type OutreachStatus,
 } from '@/lib/cloud/types';
@@ -170,6 +179,9 @@ export default function OutreachScreen() {
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [followUps, setFollowUps] = useState<CloudFollowUp[]>([]);
+  const [followUpBusy, setFollowUpBusy] = useState<string | null>(null);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
 
   const settings = cloud.health?.settings;
   const account = cloud.emailAccount;
@@ -199,6 +211,75 @@ export default function OutreachScreen() {
     setApprovingId(id);
     await cloud.approveMessage(id);
     setApprovingId(null);
+  };
+
+  const refreshFollowUps = async () => {
+    const client = getSupabase();
+    if (!client) return;
+    setFollowUps(await loadFollowUps(client));
+  };
+
+  useEffect(() => {
+    if (!cloud.session) return;
+    void refreshFollowUps().catch((thrown) => setFollowUpError(describeCloudError(thrown)));
+    // Follow-ups are reloaded after each action; the session is the only trigger here.
+  }, [cloud.session]);
+
+  const schedule = async (message: CloudOutreachMessage) => {
+    const client = getSupabase();
+    if (!client) return;
+    setFollowUpBusy(message.id);
+    setFollowUpError(null);
+    try {
+      const dueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      await scheduleFollowUp(
+        client,
+        message.id,
+        dueAt,
+        'Polite check-in three days after the first email.',
+      );
+      await refreshFollowUps();
+    } catch (thrown) {
+      setFollowUpError(describeCloudError(thrown));
+    } finally {
+      setFollowUpBusy(null);
+    }
+  };
+
+  const cancelScheduled = async (id: string) => {
+    const client = getSupabase();
+    if (!client) return;
+    setFollowUpBusy(id);
+    setFollowUpError(null);
+    try {
+      await cancelFollowUp(client, id);
+      await refreshFollowUps();
+    } catch (thrown) {
+      setFollowUpError(describeCloudError(thrown));
+    } finally {
+      setFollowUpBusy(null);
+    }
+  };
+
+  const draftScheduled = async (followUp: CloudFollowUp) => {
+    const client = getSupabase();
+    if (!client) return;
+    setFollowUpBusy(followUp.id);
+    setFollowUpError(null);
+    try {
+      const { error } = await client.rpc('enqueue_agent_job', {
+        p_kind: 'echo.draft_follow_up',
+        p_payload: { followUpId: followUp.id },
+        p_idempotency_key: `followup:${followUp.id}`,
+      });
+      if (error) throw error;
+      await refreshFollowUps();
+      await cloud.refresh();
+    } catch (thrown) {
+      setFollowUpError(describeCloudError(thrown));
+    } finally {
+      setFollowUpBusy(null);
+    }
   };
 
   if (!cloud.session) {
@@ -423,6 +504,90 @@ export default function OutreachScreen() {
         </Panel>
       </FadeInView>
 
+      {followUps.length > 0 ? (
+        <FadeInView delay={140} style={{ marginTop: spacing.xxl }}>
+          <SectionHeader label={`Follow-ups · ${followUps.length}`} />
+          <Panel padded={false}>
+            {followUpError ? (
+              <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
+                <AppText variant="caption" style={{ color: colors.amber }}>
+                  {followUpError}
+                </AppText>
+              </View>
+            ) : null}
+
+            {followUps.map((followUp) => {
+              const original = cloud.outreach.find((item) => item.id === followUp.message_id);
+              const due = Date.parse(followUp.due_at) <= Date.now();
+              const open = followUp.status === 'scheduled';
+
+              return (
+                <View
+                  key={followUp.id}
+                  style={{
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    borderTopWidth: 1,
+                    borderTopColor: colors.hairline,
+                    gap: 3,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                    <AppText variant="bodyStrong" style={{ flex: 1, fontSize: 13 }} numberOfLines={1}>
+                      {original?.subject ?? 'Follow-up'}
+                    </AppText>
+                    <AppText variant="micro" style={{ color: open ? colors.violetBright : colors.textDim }}>
+                      {FOLLOW_UP_STATUS_LABEL[followUp.status]}
+                    </AppText>
+                  </View>
+                  <AppText variant="micro" numberOfLines={1} style={{ letterSpacing: 0.4 }}>
+                    {`${due ? 'DUE' : 'DUE'} ${relativeFromIso(followUp.due_at)} · ${
+                      original?.to_email ?? 'unknown address'
+                    }`}
+                  </AppText>
+                  {followUp.note ? (
+                    <AppText variant="caption" numberOfLines={2}>
+                      {followUp.note}
+                    </AppText>
+                  ) : null}
+
+                  {open ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+                      <Pressable
+                        onPress={() => void draftScheduled(followUp)}
+                        disabled={!due || followUpBusy === followUp.id}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, paddingVertical: 2 })}
+                      >
+                        <AppText
+                          variant="micro"
+                          style={{ color: due ? colors.emerald : colors.textDim, letterSpacing: 0.6 }}
+                        >
+                          {followUpBusy === followUp.id
+                            ? 'QUEUEING'
+                            : due
+                              ? 'CREATE DRAFT'
+                              : 'NOT DUE YET'}
+                        </AppText>
+                      </Pressable>
+                      <View style={{ flex: 1 }} />
+                      <Pressable
+                        onPress={() => void cancelScheduled(followUp.id)}
+                        disabled={followUpBusy === followUp.id}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, paddingVertical: 2 })}
+                      >
+                        <AppText variant="micro" style={{ color: colors.amber, letterSpacing: 0.6 }}>
+                          CANCEL
+                        </AppText>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </Panel>
+        </FadeInView>
+      ) : null}
+
       {history.length > 0 ? (
         <FadeInView delay={160} style={{ marginTop: spacing.xxl }}>
           <SectionHeader label={`History · ${history.length}`} />
@@ -449,6 +614,28 @@ export default function OutreachScreen() {
                 <AppText variant="micro" numberOfLines={1} style={{ letterSpacing: 0.4 }}>
                   {`${message.to_email} · ${relativeFromIso(message.sent_at ?? message.created_at)}`}
                 </AppText>
+                {message.status === 'sent' ? (
+                  <Pressable
+                    onPress={() => void schedule(message)}
+                    disabled={
+                      followUpBusy === message.id ||
+                      followUps.some(
+                        (item) => item.message_id === message.id && item.status === 'scheduled',
+                      )
+                    }
+                    style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, paddingVertical: 2 })}
+                  >
+                    <AppText variant="micro" style={{ color: colors.cyan, letterSpacing: 0.6 }}>
+                      {followUps.some(
+                        (item) => item.message_id === message.id && item.status === 'scheduled',
+                      )
+                        ? 'FOLLOW-UP SCHEDULED'
+                        : followUpBusy === message.id
+                          ? 'SCHEDULING'
+                          : 'SCHEDULE FOLLOW-UP (+3 DAYS)'}
+                    </AppText>
+                  </Pressable>
+                ) : null}
               </View>
             ))}
           </Panel>

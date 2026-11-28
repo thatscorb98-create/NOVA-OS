@@ -11,10 +11,14 @@ import type {
   CloudEvent,
   CloudExpense,
   CloudFinanceSummary,
+  CloudFollowUp,
   CloudHealth,
   CloudJob,
   CloudLead,
   CloudOrder,
+  CloudProductionFile,
+  CloudProductionJob,
+  CloudProductionQa,
   CloudOutreachMessage,
   CloudPaymentIntent,
   CloudQuote,
@@ -416,7 +420,7 @@ export async function loadQuotes(client: SupabaseClient, limit = 40): Promise<Cl
   const { data, error } = await client
     .from('quotes')
     .select(
-      'id, lead_id, deal_id, service_key, title, scope, amount_cents, currency, status, delivery_days, expires_at, sent_at, accepted_at, accepted_via, created_at',
+      'id, lead_id, deal_id, service_key, title, scope, deliverables, terms, requirements, discount_cents, amount_cents, currency, status, delivery_days, expires_at, sent_at, accepted_at, accepted_via, created_at',
     )
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -435,6 +439,10 @@ export async function createQuote(
     leadId: string;
     title: string;
     scope: string;
+    deliverables?: string;
+    terms?: string;
+    requirements?: string[];
+    discountCents?: number;
     amountCents: number;
     deliveryDays: number;
     expiresInDays: number;
@@ -453,6 +461,10 @@ export async function createQuote(
       lead_id: input.leadId,
       title: input.title.trim().slice(0, 160),
       scope: input.scope.trim().slice(0, 2000),
+      deliverables: (input.deliverables ?? '').trim().slice(0, 2000),
+      terms: (input.terms ?? '').trim().slice(0, 2000),
+      requirements: (input.requirements ?? []).slice(0, 12).map((item) => item.trim()).filter(Boolean),
+      discount_cents: Math.max(0, Math.round(input.discountCents ?? 0)),
       amount_cents: Math.max(1, Math.round(input.amountCents)),
       delivery_days: Math.max(1, Math.min(90, Math.round(input.deliveryDays))),
       expires_at: expiresAt,
@@ -732,4 +744,113 @@ export async function requestDeliverableRevision(
 ): Promise<void> {
   const { error } = await client.rpc('request_deliverable_revision', { p_id: id, p_note: note });
   if (error) throw new Error(describeCloudError(error));
+}
+
+/* -------------------------------------------------------------- Phase 3 follow-ups */
+
+export async function loadFollowUps(
+  client: SupabaseClient,
+  limit = 30,
+): Promise<CloudFollowUp[]> {
+  const { data, error } = await client
+    .from('follow_ups')
+    .select('id, message_id, lead_id, contact_id, kind, status, due_at, note, draft_message_id, created_at')
+    .order('due_at', { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudFollowUp[];
+}
+
+/** The database refuses a follow-up for a message that was never sent. */
+export async function scheduleFollowUp(
+  client: SupabaseClient,
+  messageId: string,
+  dueAt: string,
+  note?: string,
+  kind: 'follow_up' | 'retention' = 'follow_up',
+): Promise<void> {
+  const { error } = await client.rpc('schedule_follow_up', {
+    p_message_id: messageId,
+    p_due_at: dueAt,
+    p_note: note ?? null,
+    p_kind: kind,
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+}
+
+export async function cancelFollowUp(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.rpc('cancel_follow_up', { p_id: id });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/* -------------------------------------------------------------- Phase 6 studio */
+
+export async function loadProductionJobs(
+  client: SupabaseClient,
+  limit = 40,
+): Promise<CloudProductionJob[]> {
+  const { data, error } = await client
+    .from('production_jobs')
+    .select(
+      'id, order_id, quote_id, service_key, title, status, attempts, max_attempts, version, qa_notes, started_at, finished_at, created_at',
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudProductionJob[];
+}
+
+export async function loadProductionFiles(
+  client: SupabaseClient,
+  limit = 200,
+): Promise<CloudProductionFile[]> {
+  const { data, error } = await client
+    .from('production_files')
+    .select('id, job_id, version, name, mime, bytes, kind, storage_path, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudProductionFile[];
+}
+
+export async function loadProductionQa(
+  client: SupabaseClient,
+  limit = 60,
+): Promise<CloudProductionQa[]> {
+  const { data, error } = await client
+    .from('production_qa')
+    .select('id, job_id, version, verdict, checks, notes, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudProductionQa[];
+}
+
+/** Start or retry one job. The database refuses a job that is not queued. */
+export async function startProduction(client: SupabaseClient, jobId: string): Promise<void> {
+  const { error } = await client.rpc('start_production', { p_job_id: jobId });
+  if (error) throw new Error(describeCloudError(error));
+}
+
+/**
+ * A short-lived signed link to one stored file. The bucket is private and the
+ * storage policy only lets the owner read their own folder.
+ */
+export async function productionFileUrl(
+  client: SupabaseClient,
+  storagePath: string,
+  seconds = 3600,
+): Promise<string> {
+  const { data, error } = await client.storage
+    .from('deliverables')
+    .createSignedUrl(storagePath, seconds);
+
+  if (error) throw new Error(describeCloudError(error));
+  if (!data?.signedUrl) throw new Error('No download link was created.');
+  return data.signedUrl;
 }

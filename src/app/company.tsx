@@ -302,6 +302,17 @@ export default function CompanyScreen() {
               />
             </View>
           </View>
+
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <NeonButton
+                label="Studio"
+                icon="color-wand-outline"
+                variant="ghost"
+                onPress={() => router.push('/studio')}
+              />
+            </View>
+          </View>
         </Panel>
       </FadeInView>
 

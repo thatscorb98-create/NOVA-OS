@@ -48,6 +48,14 @@ that reference for `succeeded`.
 - the app cannot mint an intent
 - another owner sees no quotes and no intents
 
+## Terms, deliverables and discount
+
+The completion pass added `deliverables`, `terms`, `requirements` and
+`discount_cents` to a quote. The quotes screen writes them, the acceptance page
+shows them next to the price, and a production job copies them into its brief.
+A quote is still worth exactly `amount_cents`; the discount records what the
+owner applied rather than introducing a second charge.
+
 ## What is not built
 
 - No payment provider integration in this phase. `provider` starts as `none` and

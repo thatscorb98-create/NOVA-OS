@@ -229,6 +229,10 @@ export interface CloudQuote {
   service_key: string | null;
   title: string;
   scope: string;
+  deliverables: string;
+  terms: string;
+  requirements: string[];
+  discount_cents: number;
   amount_cents: number;
   currency: string;
   status: QuoteStatus;
@@ -436,6 +440,90 @@ export const DELIVERABLE_STATUS_LABEL: Record<DeliverableStatus, string> = {
   delivered: 'DELIVERED',
   accepted: 'ACCEPTED',
   revision_requested: 'REVISION ASKED',
+  cancelled: 'CANCELLED',
+};
+
+/* -------------------------------------------------------------- Phase 3 */
+
+export type FollowUpStatus = 'scheduled' | 'drafted' | 'sent' | 'cancelled' | 'skipped';
+
+export interface CloudFollowUp {
+  id: string;
+  message_id: string;
+  lead_id: string | null;
+  contact_id: string | null;
+  kind: 'follow_up' | 'retention';
+  status: FollowUpStatus;
+  due_at: string;
+  note: string | null;
+  draft_message_id: string | null;
+  created_at: string;
+}
+
+export const FOLLOW_UP_STATUS_LABEL: Record<FollowUpStatus, string> = {
+  scheduled: 'SCHEDULED',
+  drafted: 'DRAFTED',
+  sent: 'SENT',
+  cancelled: 'CANCELLED',
+  skipped: 'SKIPPED',
+};
+
+/* -------------------------------------------------------------- Phase 6 studio */
+
+export type ProductionStatus =
+  | 'queued'
+  | 'generating'
+  | 'qa'
+  | 'ready'
+  | 'needs_attention'
+  | 'delivered'
+  | 'cancelled';
+
+export interface CloudProductionJob {
+  id: string;
+  order_id: string;
+  quote_id: string;
+  service_key: string | null;
+  title: string;
+  status: ProductionStatus;
+  attempts: number;
+  max_attempts: number;
+  version: number;
+  qa_notes: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface CloudProductionFile {
+  id: string;
+  job_id: string;
+  version: number;
+  name: string;
+  mime: string;
+  bytes: number;
+  kind: 'primary' | 'preview' | 'asset';
+  storage_path: string;
+  created_at: string;
+}
+
+export interface CloudProductionQa {
+  id: number;
+  job_id: string;
+  version: number;
+  verdict: 'pass' | 'fail';
+  checks: { name: string; pass: boolean; detail: string }[];
+  notes: string | null;
+  created_at: string;
+}
+
+export const PRODUCTION_STATUS_LABEL: Record<ProductionStatus, string> = {
+  queued: 'QUEUED',
+  generating: 'GENERATING',
+  qa: 'IN QA',
+  ready: 'READY',
+  needs_attention: 'NEEDS ATTENTION',
+  delivered: 'DELIVERED',
   cancelled: 'CANCELLED',
 };
 

@@ -1,8 +1,14 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 import { atlasDiscover, atlasResearch, sterlingScore } from './handlers/discovery.ts';
-import { echoDraftEmail, relaySendEmail } from './handlers/outreach.ts';
+import {
+  closerDraftReply,
+  echoDraftEmail,
+  echoDraftFollowUp,
+  relaySendEmail,
+} from './handlers/outreach.ts';
 import { relayCreatePaymentIntent, relayRecordPayment } from './handlers/quotes.ts';
+import { forgeProduce, sentinelQa } from './handlers/production.ts';
 
 /**
  * Job handlers.
@@ -75,9 +81,13 @@ export const HANDLERS: Record<string, JobHandler> = {
   'atlas.research': atlasResearch,
   'sterling.score': sterlingScore,
   'echo.draft_email': echoDraftEmail,
+  'echo.draft_follow_up': echoDraftFollowUp,
+  'closer.draft_reply': closerDraftReply,
   'relay.send_email': relaySendEmail,
   'relay.create_payment_intent': relayCreatePaymentIntent,
   'relay.record_payment': relayRecordPayment,
+  'forge.produce': forgeProduce,
+  'sentinel.qa': sentinelQa,
 
   'memory.remember': async (ctx) => {
     const rawText = ctx.job.payload.text;

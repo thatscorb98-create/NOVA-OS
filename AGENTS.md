@@ -19,11 +19,11 @@ Last updated 2026-11-28.
 | --- | --- | --- |
 | 1 — Cloud foundation | Done | `docs/phase-1-cloud-foundation.md` |
 | 2 — Lead discovery | Done; needs a search provider key to return anything | `docs/phase-2-and-3.md` |
-| 3 — Email and replies | Backend done; live sending remains off | `docs/phase-2-and-3.md`, `docs/phase-5-pipeline.md` |
+| 3 — Email and replies | Done for the gated flow; live sending remains off | `docs/phase-2-and-3.md`, `docs/phase-5-pipeline.md` |
 | 4 — Sales pipeline and quotes | Done | `docs/phase-4-quotes.md` |
 | 5 — Stripe | Done; test mode only, live mode off | `docs/phase-5-stripe.md` |
-| 6 — Production studio | **Next — not started** | — |
-| 7 — Delivery and retention | Not started | `docs/phase-6-production.md` covers delivery tracking only |
+| 6 — Production studio | Done; files generated, stored and QA-checked | `docs/phase-6-studio.md` |
+| 7 — Delivery and retention | **Next — not started** | `docs/phase-6-production.md` covers delivery tracking only |
 | 8 — Autonomous company loop | Not started | — |
 | 9 — Audit and dry-run | Not started | — |
 

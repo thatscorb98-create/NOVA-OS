@@ -295,6 +295,8 @@ export default function QuotesScreen() {
   const [leadId, setLeadId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [scope, setScope] = useState('');
+  const [deliverables, setDeliverables] = useState('');
+  const [terms, setTerms] = useState('');
   const [amount, setAmount] = useState('');
   const [days, setDays] = useState('7');
   const [expiry, setExpiry] = useState('14');
@@ -344,6 +346,8 @@ export default function QuotesScreen() {
       leadId,
       title,
       scope,
+      deliverables,
+      terms,
       amountCents: Math.round(value * 100),
       deliveryDays: Number.parseInt(days, 10) || 7,
       expiresInDays: Number.parseInt(expiry, 10) || 14,
@@ -353,6 +357,8 @@ export default function QuotesScreen() {
       setLeadId(null);
       setTitle('');
       setScope('');
+      setDeliverables('');
+      setTerms('');
       setAmount('');
     }
   };
@@ -467,6 +473,26 @@ export default function QuotesScreen() {
                 onChangeText={setScope}
                 multiline
                 maxLength={2000}
+              />
+
+              <FormField
+                label="Deliverables"
+                placeholder="What the customer receives."
+                value={deliverables}
+                onChangeText={setDeliverables}
+                multiline
+                maxLength={2000}
+                hint="Shown on the acceptance page and carried into production."
+              />
+
+              <FormField
+                label="Terms"
+                placeholder="Payment, revisions and timing the customer accepts."
+                value={terms}
+                onChangeText={setTerms}
+                multiline
+                maxLength={2000}
+                hint="Nothing is accepted until the customer confirms this offer."
               />
 
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>

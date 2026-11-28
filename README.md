@@ -239,6 +239,7 @@ Later cloud phases, each with its own evidence and limits:
 - [`docs/phase-5-stripe.md`](docs/phase-5-stripe.md) — Stripe checkout, signed webhooks, verified payments, orders and the finance summary.
 - [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
 - [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
+- [`docs/phase-6-studio.md`](docs/phase-6-studio.md) — production jobs, real generated files, storage, SENTINEL QA and bounded retries.
 
 The uploaded build plan is archived at [`docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md`](docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md). [`AGENTS.md`](AGENTS.md) records which roadmap phase is complete and the rules every phase follows.
 
@@ -300,6 +301,23 @@ owner's own action and marks the deal `won`; revision requests are bounded by
 the included allowance. When payments are live, delivery cannot start until a
 succeeded payment record exists. The app can read deliverables but every
 transition goes through a database function.
+
+### Studio (Phase 6)
+
+A verified paid order creates a production job. When production is armed, the
+worker runs `forge.produce`: it writes real files from the accepted brief (HTML,
+Markdown, CSV, SVG and a real PDF), uploads them to the private `deliverables`
+bucket and hands the job to `sentinel.qa`. SENTINEL opens the stored bytes, checks
+type, structure, the business name, PDF markers, links and placeholders, and
+only a passing QA row makes the job `READY`. A failure returns the job to
+production with the notes, up to the attempt limit; after that it stops at
+**needs attention**.
+
+A website audit fetches the lead's public page once over HTTPS (with private and
+redirect abuse refused) and reports only what it observed. **Studio** shows jobs,
+versions, attempts, QA notes and one-hour signed links to each file. Production
+is off by default; an order still creates its job while off, so no paid work is
+lost. Files are private and scoped to the owner's folder.
 
 `.github/workflows/supabase-deploy.yml` deploys **every** directory under `supabase/functions` that has an `index.ts`; `_shared` is imported, not deployed on its own. The list is discovered at run time, so a new function is never left out of a deployment.
 

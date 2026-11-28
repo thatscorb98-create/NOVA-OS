@@ -2,6 +2,33 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.3.0] — 2026-11-28
+
+Third Android release (`versionCode` 3).
+
+### Added
+
+- **Production studio (Phase 6).** A verified paid order creates a production
+  job. FORGE writes real files from the accepted brief — Markdown, HTML, CSV,
+  SVG and a real PDF — into the private `deliverables` bucket. SENTINEL checks
+  the stored bytes for type, structure, PDF markers, the business name, links and
+  unresolved tokens, and only a passing QA row makes a job ready. Failures return
+  to production with notes for at most three attempts.
+- **Website audit.** A public HTTPS page is fetched once and reported exactly as
+  observed: status, timing, title, description, viewport, headings, image alt
+  text, links and size. Private hosts, IP literals and unsafe redirects are
+  refused.
+- **Studio screen.** Jobs, versions, attempts, QA notes, one-hour signed file
+  links and the production arm/disarm switch.
+- **Follow-ups (Phase 3).** A sent message can be scheduled for a check-in. A
+  reply, bounce or suppression cancels it automatically, and a due follow-up can
+  become an owner-approved draft.
+- **Routine reply drafts (Phase 3).** CLOSER drafts a reply from the stored
+  intent and lead facts; it waits in Outreach for approval and nothing sends
+  automatically.
+- **Quote terms (Phase 4).** Quotes now carry deliverables, terms, requirements
+  and a discount, and the acceptance page shows them next to the price.
+
 ## [0.2.0] — 2026-11-28
 
 Second Android release (`versionCode` 2).

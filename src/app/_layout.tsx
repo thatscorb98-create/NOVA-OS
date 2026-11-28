@@ -73,6 +73,7 @@ export default function RootLayout() {
               <Stack.Screen name="quotes" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="pipeline" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="delivery" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="studio" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="finance" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen
                 name="core"
