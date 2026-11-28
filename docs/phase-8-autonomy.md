@@ -7,9 +7,30 @@ reviews the company and advances the next real task without the phone being open
 
 `nova.orchestrate` is a normal queued job, so it gets the Phase 1 queue's
 `SKIP LOCKED` claim, five-minute lock, attempt budget, backoff, checkpoints and
-stale-lock recovery. The scheduler enqueues one cycle per owner per minute
-(`nova_loop:<minute bucket>`), skips a paused company, and skips an owner who
-already has a queued or running cycle. Nothing on the phone is required.
+stale-lock recovery. Nothing on the phone is required.
+
+### The scheduler only queues real work
+
+Every minute the scheduler reads one owner snapshot, but it no longer queues a
+cycle unconditionally. If the snapshot shows no customer work, no discovery
+work and nothing else the loop can act on, the tick writes **nothing**: no
+`nova.orchestrate` job, no `company_cycles` row and no event. An idle company
+costs one read-only, owner-scoped snapshot per minute instead of a job and two
+rows per minute.
+
+- **Urgent work always bypasses the idle backoff.** A due follow-up, an
+  undrafted reply, an unsent paid delivery, a paid production job, an approved
+  message, a delivery without a retention plan or a qualified lead without
+  outreach is queued on the next tick, exactly as before.
+- When only non-urgent work remains, the previous cycle sets the pace: `action`
+  may retry after 1 minute, `blocked` after 30, `error` after 15 and `idle`
+  after 60. This stops a recurring blocker from writing a row every minute while
+  still rechecking it.
+- Discovery is limited to one attempt per UTC day. The snapshot's
+  `discoveryToday` counts any `atlas.discover` job created today (from the loop
+  or the app), so an empty or failed search is not queued again and again.
+- A paused company is skipped entirely, and an owner with a queued or running
+  cycle is left alone until it finishes.
 
 Each cycle:
 
@@ -30,8 +51,9 @@ Each cycle:
 | 5 | An approved message is waiting | `relay.send_email` |
 | 6 | A delivered customer has no retention plan | `relay.plan_retention` |
 | 7 | A qualified lead with a real contact has no outreach | `echo.draft_email` |
-| 8 | Nothing else, discovery armed and under the daily lead cap | `atlas.discover` |
-| — | Nothing to do | records `idle` |
+| 8 | Nothing else, discovery armed, under the daily lead cap and not attempted today | `atlas.discover` |
+| — | Work existed but the chosen action cannot run | records `blocked` (30-minute backoff) |
+| — | Snapshot showed no work | no job and no row; scheduler skips |
 
 One action per cycle is deliberate. Every step is visible, a failure cannot
 cascade into several downstream actions, and the next cycle sees the result.
@@ -61,7 +83,9 @@ cascade into several downstream actions, and the next cycle sees the result.
 `company_cycles` is the loop's checkpoint trail, unique on
 `(owner_id, cycle_key)`, readable by its owner only. Send and delivery keys
 include the UTC day, so a daily email cap reached today can be tried again
-tomorrow instead of leaving a dead job for that message forever.
+tomorrow instead of leaving a dead job for that message forever. The loop now
+writes a row only when a cycle actually ran, and idle/blocked cycles back off,
+so this table grows with decisions rather than with wall-clock minutes.
 
 `nova_loop_snapshot()` is `security definer` but every count and every `next`
 id filters `owner_id = auth.uid()`. It returns the mode, feature switches, caps,
@@ -76,8 +100,8 @@ and drains the queue. The **Company mode** chips stop the loop at `paused`.
 
 ## Checks
 
-- Fresh local Postgres, all migrations: **114 assertions passed, 0 failed**
-  (86 existing + 28 new). The new assertions cover:
+- Fresh local Postgres, all migrations: **116 assertions passed, 0 failed**
+  (86 existing + 30 new). The new assertions cover:
   - receipt, review and recurring follow-ups scheduled from a sent delivery;
   - one per kind, idempotent re-scheduling, another owner refused;
   - suppression cancelling all three kinds, re-scheduling after it is lifted, and
@@ -87,7 +111,9 @@ and drains the queue. The **Company mode** chips stop the loop at `paused`.
   - revoking every live link for a delivery and another owner refused;
   - the loop snapshot for two owners and for the service-role worker, an owner
     refused another owner's snapshot, cycle recording and duplicate keys, RLS,
-    and the AI budget refusing overspend.
+    and the AI budget refusing overspend;
+  - `discoveryToday` starting at zero and becoming one after a discovery job,
+    which is what lets the scheduler skip a repeat attempt that day.
 - `npx tsc --noEmit` exit 0.
 - `deno check` on every edge function (including the scheduler and the new
   orchestrator module) exit 0.

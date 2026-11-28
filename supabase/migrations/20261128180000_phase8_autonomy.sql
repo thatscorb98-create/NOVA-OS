@@ -97,6 +97,15 @@ begin
       select count(*)::int from public.leads
       where owner_id = v_owner and discovered_at >= date_trunc('day', now())
     ),
+    'discoveryToday', (
+      -- Any discovery attempt today, from the loop or from the app. It marks
+      -- the day as spent so an empty or failed search is not queued again on
+      -- every scheduler tick.
+      select count(*)::int from public.agent_jobs
+      where owner_id = v_owner
+        and kind = 'atlas.discover'
+        and created_at >= date_trunc('day', now())
+    ),
     'leadsWithoutOutreach', (
       select count(*)::int
       from public.leads l

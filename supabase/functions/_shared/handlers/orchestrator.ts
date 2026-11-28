@@ -1,4 +1,5 @@
 import type { JobContext, JobHandler } from '../jobs.ts';
+import { OUTREACH_MODES, type LoopSnapshot } from '../loop-policy.ts';
 
 /**
  * Phase 8: the autonomous company loop.
@@ -17,33 +18,6 @@ import type { JobContext, JobHandler } from '../jobs.ts';
  *   * buy, upgrade or subscribe to anything. There is no such code path here.
  *   * retry a dead job forever. Dead work is reported, not silently resurrected.
  */
-
-interface LoopNext {
-  followUpId: string | null;
-  replyEventId: number | null;
-  production: { jobId: string; version: number } | null;
-  delivery: { jobId: string; deliverableId: string } | null;
-  approvedMessageId: string | null;
-  leadId: string | null;
-  deliveredMessageId: string | null;
-}
-
-interface LoopSnapshot {
-  mode: string;
-  emailEnabled: boolean;
-  discoveryEnabled: boolean;
-  productionEnabled: boolean;
-  dailyLeadCap: number;
-  dailyEmailCap: number;
-  aiBudgetCents: number;
-  aiSpendCents: number;
-  aiRemainingCents: number;
-  counts: Record<string, number>;
-  next: LoopNext;
-  serverTime: string;
-}
-
-const OUTREACH_MODES = new Set(['outreach', 'sales', 'revenue', 'full']);
 
 async function enqueue(
   ctx: JobContext,
@@ -222,11 +196,14 @@ export const novaOrchestrate: JobHandler = async (ctx: JobContext) => {
     );
   }
 
-  // 8. Nothing to work, so look for new businesses — within the daily lead cap.
+  // 8. Nothing to work, so look for new businesses — within the daily lead cap
+  //    and at most once per UTC day. The daily marker is what stops a failed or
+  //    empty discovery from being queued again on every cycle.
   if (
     snapshot.discoveryEnabled &&
     snapshot.dailyLeadCap > 0 &&
-    snapshot.counts.leadsToday < snapshot.dailyLeadCap
+    snapshot.counts.leadsToday < snapshot.dailyLeadCap &&
+    snapshot.counts.discoveryToday === 0
   ) {
     return act(
       'atlas.discover',

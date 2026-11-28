@@ -87,8 +87,8 @@ to authenticated only.
 
 ## Checks
 
-- Fresh local Postgres, all migrations: **114 assertions passed, 0 failed** (86
-  through Phase 7 + 28 covering the Phase 7 completion and Phase 8 snapshot:
+- Fresh local Postgres, all migrations: **116 assertions passed, 0 failed** (86
+  through Phase 7 + 30 covering the Phase 7 completion and Phase 8 snapshot:
   receipt/review/recurring scheduling, idempotency, opt-out cancellation,
   customer revision from a token, expiry, link revocation, company cycles and the
   AI budget). The earlier 86 cover link minting, token resolution, revocation,
