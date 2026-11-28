@@ -168,7 +168,7 @@ npx eas-cli@latest build --platform android --profile preview
 | --- | --- |
 | App name | NOVA OS |
 | Package | `com.novaos.app` |
-| Version / code | `0.6.1` / `7` (`versionCode` in `app.json`) |
+| Version / code | `0.6.2` / `8` (`versionCode` in `app.json`) |
 | Permissions | `INTERNET`, `VIBRATE` — nothing else is requested |
 | Icon | 512×512 (above every Android density bucket), plus adaptive foreground and monochrome layers on `#04050A` |
 | Splash | Generated mark on `#04050A`, 220 px wide, dark mode identical |

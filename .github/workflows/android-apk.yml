@@ -110,7 +110,7 @@ jobs:
 
       - name: Tune Gradle for the runner
         run: |
-          printf '\norg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8\norg.gradle.parallel=true\norg.gradle.workers.max=4\norg.gradle.caching=true\nreactNativeArchitectures=arm64-v8a\n' >> android/gradle.properties
+          printf '\norg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8\norg.gradle.parallel=true\norg.gradle.workers.max=4\norg.gradle.caching=true\nreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64\n' >> android/gradle.properties
 
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -125,6 +125,18 @@ jobs:
           cp android/app/build/outputs/apk/release/*.apk build-output/nova-os.apk
           ls -lh build-output
 
+      # A 36 MB download can be truncated by a phone browser, and an APK that is
+      # not a valid signed package is refused with "package seems to be invalid".
+      # Verify the signature here, and publish a zip copy as a fallback.
+      - name: Verify signature and package the APK
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs build-output/nova-os.apk
+          (cd build-output && zip -q -9 nova-os.zip nova-os.apk)
+          sha256sum build-output/nova-os.apk build-output/nova-os.zip | tee build-output/sha256.txt
+          unzip -l build-output/nova-os.apk | grep -oE 'lib/[^/]+/' | sort -u
+
       # A release asset gives a permanent public URL that survives the 90-day
       # artifact expiry and works from a phone browser without a GitHub login.
       - name: Publish download link
@@ -133,14 +145,19 @@ jobs:
         run: |
           set +e
           APK=build-output/nova-os.apk
+          ZIP=build-output/nova-os.zip
           TAG=apk-latest
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/nova-os.apk"
+          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/nova-os.zip"
           MIRROR=""
+          SHA=$(cut -d' ' -f1 build-output/sha256.txt | head -1)
+          APP_VERSION=$(node -p "require('./app.json').expo.version")
+          APP_VERSION_CODE=$(node -p "require('./app.json').expo.android.versionCode")
 
-          NOTES="Automated build of ${GITHUB_SHA::7}. Cloud configured: ${CLOUD_CONFIGURED:-false}."
+          NOTES="Automated build of ${GITHUB_SHA::7}. Version ${APP_VERSION} (${APP_VERSION_CODE}). Cloud configured: ${CLOUD_CONFIGURED:-false}."
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
+            gh release upload "$TAG" "$APK" "$ZIP" --clobber >/dev/null 2>&1
             # The body is the only record of which commit the asset came from, so
             # it is rewritten on every build, not just when the release is made.
             gh release edit "$TAG" --notes "$NOTES" >/dev/null 2>&1
@@ -149,7 +166,7 @@ jobs:
               --title "NOVA OS APK (latest build)" \
               --notes "$NOTES" \
               --prerelease >/dev/null 2>&1
-            gh release upload "$TAG" "$APK" --clobber >/dev/null 2>&1
+            gh release upload "$TAG" "$APK" "$ZIP" --clobber >/dev/null 2>&1
           fi
 
           if ! curl -fsSL --max-time 60 -o /dev/null "$RELEASE_URL"; then
@@ -166,20 +183,24 @@ jobs:
           fi
 
           {
-            echo "## NOVA OS APK"
+            echo "## NOVA OS APK ${APP_VERSION} (${APP_VERSION_CODE})"
             echo ""
             echo "[Download nova-os.apk]($URL)"
             echo ""
+            echo "[Download nova-os.zip]($ZIP_URL) — the same APK inside, for browsers that truncate large direct downloads."
+            echo ""
+            echo "SHA-256: \`$SHA\`  "
             echo "Cloud: **${CLOUD_CONFIGURED:-false}**  "
             echo "Build: \`${GITHUB_SHA::7}\`"
             echo ""
             if [ -n "$RELEASE_URL" ]; then
-              echo "Permanent release asset, rebuilt on every run."
+              echo "Permanent release assets, rebuilt on every run."
             else
               echo "Temporary mirror. The same file is attached as the \`nova-os-apk\` artifact."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           echo "APK URL: $URL"
+          echo "ZIP URL: $ZIP_URL"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
