@@ -39,6 +39,20 @@ function statusTone(status: CloudJobStatus): string {
   }
 }
 
+function auditTone(status: string): string {
+  switch (status) {
+    case 'passed':
+      return colors.success;
+    case 'failed':
+      return colors.danger;
+    case 'blocked':
+    case 'running':
+      return colors.amber;
+    default:
+      return colors.textDim;
+  }
+}
+
 function cycleTone(status: 'action' | 'idle' | 'paused' | 'blocked' | 'error'): string {
   switch (status) {
     case 'action':
@@ -497,6 +511,84 @@ export default function CloudScreen() {
               </Panel>
             </FadeInView>
           ) : null}
+
+          <FadeInView delay={145} style={{ marginTop: spacing.xxl }}>
+            <SectionHeader label="Audit & dry-run" />
+            <Panel>
+              <AppText variant="caption">
+                A dry-run audit reads the database and configuration, checks RLS, grants, payment and
+                delivery integrity, queue recovery, spending and every live gate, then stores the
+                report. It sends no email, creates no checkout and produces no file.
+              </AppText>
+
+              {cloud.auditRuns.length === 0 ? (
+                <AppText variant="micro" style={{ marginTop: spacing.md, letterSpacing: 0.4 }}>
+                  NO AUDIT HAS RUN YET. THE FIRST RUN WRITES A REAL PASS, FAIL OR BLOCKED REPORT.
+                </AppText>
+              ) : (
+                <View style={{ marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2, paddingTop: spacing.sm }}>
+                    <StatusDot color={auditTone(cloud.auditRuns[0].status)} size={6} />
+                    <AppText variant="micro" style={{ color: auditTone(cloud.auditRuns[0].status), flex: 1 }}>
+                      {cloud.auditRuns[0].status.toUpperCase()} · {relativeFromIso(cloud.auditRuns[0].created_at)}
+                    </AppText>
+                    <AppText variant="micro">
+                      {typeof cloud.auditRuns[0].summary.passed === 'number'
+                        ? `${cloud.auditRuns[0].summary.passed} PASS`
+                        : '—'}
+                    </AppText>
+                  </View>
+
+                  {cloud.auditRuns[0].checks.map((check) => (
+                    <View
+                      key={check.key}
+                      style={{
+                        paddingVertical: spacing.sm + 1,
+                        borderTopWidth: 1,
+                        borderTopColor: colors.hairline,
+                        gap: 2,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2 }}>
+                        <StatusDot
+                          color={
+                            check.status === 'pass'
+                              ? colors.success
+                              : check.status === 'blocked'
+                                ? colors.amber
+                                : colors.danger
+                          }
+                          size={4}
+                        />
+                        <AppText variant="micro" style={{ flex: 1, letterSpacing: 0.8 }}>
+                          {check.key.replace(/_/g, ' ').toUpperCase()}
+                        </AppText>
+                        <AppText variant="micro">{check.status.toUpperCase()}</AppText>
+                      </View>
+                      {check.detail ? (
+                        <AppText variant="micro" style={{ letterSpacing: 0, color: colors.textMuted }}>
+                          {check.detail}
+                        </AppText>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={{ marginTop: spacing.md }}>
+                <NeonButton
+                  label="Run dry-run audit"
+                  icon="shield-checkmark-outline"
+                  onPress={() => void cloud.runAudit()}
+                  loading={cloud.busy === 'audit'}
+                />
+              </View>
+              <AppText variant="micro" style={{ marginTop: spacing.sm, letterSpacing: 0.4 }}>
+                BLOCKED MEANS A REQUIRED PROVIDER OR KEY IS MISSING — IT IS NOT A PASS. LIVE EMAIL AND
+                PAYMENTS STAY OFF UNTIL THE CONTROLLED TEST RUN HAS EVIDENCE.
+              </AppText>
+            </Panel>
+          </FadeInView>
 
           <FadeInView delay={150} style={{ marginTop: spacing.xxl }}>
             <SectionHeader label="Recent jobs" />

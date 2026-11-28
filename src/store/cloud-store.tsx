@@ -14,6 +14,7 @@ import { getSupabase } from '@/lib/cloud/client';
 import { isCloudConfigured, missingCloudVariables } from '@/lib/cloud/config';
 import type {
   AutonomyMode,
+  CloudAuditRun,
   CloudCatalogService,
   CloudCompanyCycle,
   CloudCustomerHistory,
@@ -71,6 +72,7 @@ type BusyKey =
   | 'delivery'
   | 'payment'
   | 'finance'
+  | 'audit'
   | null;
 
 interface CloudContextValue {
@@ -95,6 +97,7 @@ interface CloudContextValue {
   customerHistory: CloudCustomerHistory[];
   companyCycles: CloudCompanyCycle[];
   loopSnapshot: CloudLoopSnapshot | null;
+  auditRuns: CloudAuditRun[];
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
   orders: CloudOrder[];
@@ -163,6 +166,7 @@ interface CloudContextValue {
   scheduleDeliveryFollowUps: (messageId: string) => Promise<CloudResult>;
   revokeDeliveryLinks: (deliverableId: string) => Promise<CloudResult>;
   runCompanyCycle: () => Promise<CloudResult>;
+  runAudit: () => Promise<CloudResult>;
   clearNotice: () => void;
 }
 
@@ -198,6 +202,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [customerHistory, setCustomerHistory] = useState<CloudCustomerHistory[]>([]);
   const [companyCycles, setCompanyCycles] = useState<CloudCompanyCycle[]>([]);
   const [loopSnapshot, setLoopSnapshot] = useState<CloudLoopSnapshot | null>(null);
+  const [auditRuns, setAuditRuns] = useState<CloudAuditRun[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyKey>(null);
@@ -254,6 +259,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setCustomerHistory([]);
       setCompanyCycles([]);
       setLoopSnapshot(null);
+      setAuditRuns([]);
       return;
     }
 
@@ -282,6 +288,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextLinks,
         nextCycles,
         nextLoop,
+        nextAudit,
       ] = await Promise.all([
         cloudApi.loadHealth(client),
         cloudApi.loadJobs(client),
@@ -305,6 +312,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDeliveryLinks(client),
         cloudApi.loadCompanyCycles(client),
         cloudApi.loadLoopSnapshot(client),
+        cloudApi.loadAuditRuns(client),
       ]);
 
       setHealth(nextHealth);
@@ -330,6 +338,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeliveryLinks(nextLinks);
       setCompanyCycles(nextCycles);
       setLoopSnapshot(nextLoop);
+      setAuditRuns(nextAudit);
       setLastError(null);
     } catch (error) {
       setLastError(cloudApi.describeCloudError(error));
@@ -361,6 +370,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeliveryLinks([]);
       setCompanyCycles([]);
       setLoopSnapshot(null);
+      setAuditRuns([]);
       return;
     }
     void refresh();
@@ -422,6 +432,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     setCustomerHistory([]);
     setCompanyCycles([]);
     setLoopSnapshot(null);
+    setAuditRuns([]);
     setLastError(null);
     setLastMessage(null);
   }, []);
@@ -1225,6 +1236,33 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refresh]);
 
+  const runAudit = useCallback(async (): Promise<CloudResult> => {
+    const client = getSupabase();
+    if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+    setBusy('audit');
+    setLastError(null);
+    setLastMessage(null);
+
+    try {
+      const run = await cloudApi.startAuditRun(client);
+      const worker = await cloudApi.runWorker(client, 8);
+      await refresh();
+
+      const latest = (await cloudApi.loadAuditRuns(client, 1))[0] ?? run;
+      const detail = `Dry-run audit is ${latest.status}. The worker ran ${worker.claimed} job(s): ${worker.succeeded} succeeded, ${worker.failed} failed.`;
+
+      setLastMessage(detail);
+      return { ok: true, detail };
+    } catch (error) {
+      const message = cloudApi.describeCloudError(error);
+      setLastError(message);
+      return { ok: false, error: message };
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
   const loadMoreReadyLeads = useCallback(async () => {
     const client = getSupabase();
     if (!client || readyLoading) return;
@@ -1319,9 +1357,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       scheduleDeliveryFollowUps,
       revokeDeliveryLinks,
       runCompanyCycle,
+      runAudit,
       deliveryLinks,
       companyCycles,
       loopSnapshot,
+      auditRuns,
       customerHistory,
       clearNotice,
     }),
@@ -1386,9 +1426,11 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       scheduleDeliveryFollowUps,
       revokeDeliveryLinks,
       runCompanyCycle,
+      runAudit,
       deliveryLinks,
       companyCycles,
       loopSnapshot,
+      auditRuns,
       customerHistory,
       clearNotice,
     ],

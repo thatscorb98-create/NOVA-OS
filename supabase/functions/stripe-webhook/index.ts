@@ -1,5 +1,6 @@
 import { fail, json, methodNotAllowed, preflight } from '../_shared/http.ts';
 import { adminClient, env, SERVICE_VERSION } from '../_shared/supabase.ts';
+import { verifyStripeSignature } from '../_shared/stripe-signature.ts';
 
 /**
  * Stripe webhook.
@@ -15,66 +16,6 @@ import { adminClient, env, SERVICE_VERSION } from '../_shared/supabase.ts';
  *
  * No user session is involved: Stripe calls this endpoint directly.
  */
-
-const TOLERANCE_SECONDS = 300;
-
-function hex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function safeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
-  }
-  return diff === 0;
-}
-
-async function verifySignature(
-  payload: string,
-  header: string,
-  secret: string,
-): Promise<{ ok: boolean; reason?: string }> {
-  const parts = header.split(',').map((part) => part.trim());
-  let timestamp = '';
-  const signatures: string[] = [];
-
-  for (const part of parts) {
-    const [key, value] = part.split('=');
-    if (key === 't') timestamp = value ?? '';
-    if (key === 'v1' && value) signatures.push(value);
-  }
-
-  if (!timestamp || signatures.length === 0) {
-    return { ok: false, reason: 'missing timestamp or signature' };
-  }
-
-  const seconds = Number.parseInt(timestamp, 10);
-  if (!Number.isFinite(seconds)) return { ok: false, reason: 'bad timestamp' };
-
-  if (Math.abs(Date.now() / 1000 - seconds) > TOLERANCE_SECONDS) {
-    return { ok: false, reason: 'timestamp outside tolerance' };
-  }
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-
-  const expected = hex(
-    await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${payload}`)),
-  );
-
-  return signatures.some((signature) => safeEqualHex(expected, signature))
-    ? { ok: true }
-    : { ok: false, reason: 'signature mismatch' };
-}
 
 interface StripeEvent {
   id?: string;
@@ -131,7 +72,7 @@ Deno.serve(async (req) => {
     return fail('A request body is required.');
   }
 
-  const verified = await verifySignature(raw, signature, secret);
+  const verified = await verifyStripeSignature(raw, signature, secret);
   if (!verified.ok) {
     return fail(`Invalid Stripe signature: ${verified.reason}. Nothing was recorded.`, 400);
   }

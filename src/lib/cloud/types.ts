@@ -602,6 +602,38 @@ export const PRODUCTION_STATUS_LABEL: Record<ProductionStatus, string> = {
   cancelled: 'CANCELLED',
 };
 
+/* -------------------------------------------------------------- Phase 9 audit */
+
+export type AuditRunStatus = 'queued' | 'running' | 'passed' | 'failed' | 'blocked';
+export type AuditCheckStatus = 'pass' | 'fail' | 'blocked';
+
+export interface CloudAuditCheck {
+  key: string;
+  status: AuditCheckStatus;
+  detail: string;
+  data: Record<string, unknown>;
+  at: string;
+}
+
+export interface CloudAuditRun {
+  id: string;
+  status: AuditRunStatus;
+  dry_run: boolean;
+  checks: CloudAuditCheck[];
+  summary: Record<string, unknown>;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export const AUDIT_STATUS_LABEL: Record<AuditRunStatus, string> = {
+  queued: 'QUEUED',
+  running: 'RUNNING',
+  passed: 'PASSED',
+  failed: 'FAILED',
+  blocked: 'BLOCKED',
+};
+
 export const AUTONOMY_MODES: { key: AutonomyMode; label: string; note: string }[] = [
   { key: 'paused', label: 'Paused', note: 'Nothing runs except recovery jobs.' },
   { key: 'intelligence', label: 'Intelligence', note: 'Discover, research, score and draft only.' },

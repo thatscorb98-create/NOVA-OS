@@ -25,7 +25,7 @@ Last updated 2026-11-28.
 | 6 — Production studio | Done; files generated, stored and QA-checked | `docs/phase-6-studio.md` |
 | 7 — Delivery and retention | Done; private links, delivery email, revision re-production, receipt/review/recurring retention, customer revisions from the link, revocation and history | `docs/phase-7-delivery.md` |
 | 8 — Autonomous company loop | Done; scheduler-driven `nova.orchestrate`, one gated action per cycle, company-cycle checkpoints and the AI spending cap | `docs/phase-8-autonomy.md` |
-| 9 — Audit and dry-run | **Next — not started** | — |
+| 9 — Audit and dry-run | **Started; dry-run audit built and verified locally. Controlled live run blocked by missing Supabase, search, email and Stripe configuration.** | `docs/phase-9-audit.md` |
 
 Update this table when a phase completes. A phase is done only when its
 checks were actually executed and its evidence page exists.

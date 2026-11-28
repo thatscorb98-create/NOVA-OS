@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MemoryRecord } from '@/types/nova';
 import type {
   AutonomyMode,
+  CloudAuditRun,
   CloudCatalogService,
   CloudCompanyCycle,
   CloudCustomerHistory,
@@ -926,8 +927,37 @@ export async function enqueueCompanyCycle(client: SupabaseClient): Promise<strin
   return job?.id ?? null;
 }
 
-/* -------------------------------------------------------------- Phase 6 studio */
+/* -------------------------------------------------------------- Phase 9 audit */
 
+/** The owner's recent dry-run audits, newest first. RLS scopes them to the owner. */
+export async function loadAuditRuns(
+  client: SupabaseClient,
+  limit = 3,
+): Promise<CloudAuditRun[]> {
+  const { data, error } = await client
+    .from('audit_runs')
+    .select('id, status, dry_run, checks, summary, started_at, finished_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudAuditRun[];
+}
+
+/**
+ * Start one dry-run audit and queue its worker job. The database refuses a
+ * second queued/running audit and refuses a non-dry-run request.
+ */
+export async function startAuditRun(client: SupabaseClient): Promise<CloudAuditRun> {
+  const { data, error } = await client.rpc('start_audit_run', { p_dry_run: true });
+  if (error) throw new Error(describeCloudError(error));
+
+  const run = data as CloudAuditRun | null;
+  if (!run?.id) throw new Error('The audit run was not created.');
+  return run;
+}
+
+/* -------------------------------------------------------------- Phase 6 studio */
 export async function loadProductionJobs(
   client: SupabaseClient,
   limit = 40,

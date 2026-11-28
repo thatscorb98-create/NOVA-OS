@@ -4,10 +4,10 @@ A native Android AI-agent operating system, built with **React Native + Expo + T
 
 NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (research & analysis), **FORGE** (engineering), **ECHO** (marketing & content), **STERLING** (business strategy), **RELAY** (operations) and **SENTINEL** (quality & safety).
 
-> **Current status: Phase Eight — autonomous company loop.**
+> **Current status: Phase Nine — audit and dry-run.**
 > Give NOVA a goal and it plans the work, delegates each task to a specialist, reviews what comes back, retries failures and writes a final report. Runs are gated by approvals and hard budgets, and memory from previous missions is recalled into every prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
 >
-> **Cloud foundation:** discovery, outreach, quotes, Stripe checkout and verified payments, the reply pipeline and delivery tracking are built and checked against a local Postgres. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered. No Stripe key is configured, so no Checkout Session has ever been created by this build.
+> **Cloud foundation:** discovery, outreach, quotes, Stripe checkout and verified payments, the reply pipeline, delivery tracking and the autonomous loop are built and checked against a local Postgres. A read-only dry-run audit now checks RLS, grants, payment and delivery integrity, recovery, spending and every live gate, and stores pass/fail/blocked evidence. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered. No Stripe key is configured, so no Checkout Session has ever been created by this build.
 
 ---
 
@@ -161,7 +161,7 @@ npx eas-cli@latest build --platform android --profile preview
 | --- | --- |
 | App name | NOVA OS |
 | Package | `com.novaos.app` |
-| Version / code | `0.1.0` / `1` (`versionCode` in `app.json`) |
+| Version / code | `0.6.0` / `6` (`versionCode` in `app.json`) |
 | Permissions | `INTERNET`, `VIBRATE` — nothing else is requested |
 | Icon | 512×512 (above every Android density bucket), plus adaptive foreground and monochrome layers on `#04050A` |
 | Splash | Generated mark on `#04050A`, 220 px wide, dark mode identical |
@@ -242,6 +242,7 @@ Later cloud phases, each with its own evidence and limits:
 - [`docs/phase-6-studio.md`](docs/phase-6-studio.md) — production jobs, real generated files, storage, SENTINEL QA and bounded retries.
 - [`docs/phase-7-delivery.md`](docs/phase-7-delivery.md) — private expiring links, the delivery email, revision re-production, receipt/review/recurring retention, customer revisions from the link, revocation and customer history.
 - [`docs/phase-8-autonomy.md`](docs/phase-8-autonomy.md) — the scheduler-driven company loop, its one-action cycles, checkpoints and spending cap.
+- [`docs/phase-9-audit.md`](docs/phase-9-audit.md) — the read-only dry-run audit, its security and integrity checks, local evidence and the live configuration still missing.
 
 The uploaded build plan is archived at [`docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md`](docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md). [`AGENTS.md`](AGENTS.md) records which roadmap phase is complete and the rules every phase follows.
 
@@ -314,6 +315,22 @@ the live links and can revoke a link after the app has been reopened. A delivere
 customer gets a receipt check, a review ask and a later recurring-service
 check-in; each is a draft for approval and every one is cancelled by a reply or
 opt-out. Delivery also shows one history row per paying customer.
+
+### Audit and dry-run (Phase 9)
+
+**Cloud → Audit & dry-run** starts a queued `audit.run`. The database creates one
+`audit_runs` row, constrained to `dry_run = true`, and the worker records real
+checks: RLS and anon grants, `SECURITY DEFINER` search paths, payment and order
+integrity, delivery and production links, queue recovery, duplicate sends, the
+AI spending cap, every live gate and provider configuration.
+
+A missing provider is reported as **blocked**, never passed. One failing check
+makes the whole run **failed**; only a run with no fail or blocked check is
+**passed**. The audit reads only: it sends no email, creates no checkout and
+produces no file. A second run cannot pile up while one is queued, and a dead
+worker job is closed on the next start. The Stripe webhook's HMAC logic is also
+covered by a six-case test: a valid signature passes; a wrong secret, tampered
+body, stale timestamp or missing header is rejected.
 
 ### Autonomous loop (Phase 8)
 

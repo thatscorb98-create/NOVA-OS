@@ -2,6 +2,24 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.6.0] — 2026-11-28
+
+Sixth Android release (`versionCode` 6).
+
+### Added
+
+- **Dry-run audit (Phase 9).** `audit.run` creates an owner-scoped `audit_runs`
+  report and checks database security (RLS, anon grants, `search_path`, anon
+  definers), payment and order integrity, delivery and production links, queue
+  recovery, duplicate sends, the AI spending cap, every live gate and provider
+  configuration. Missing providers are `blocked`, never passed; one failure
+  fails the run. The audit is read-only and constrained to `dry_run = true`.
+- **Audit panel.** Cloud shows the latest report, each check's status and a
+  one-tap dry-run.
+- **Stripe signature tests.** Verification moved to a shared module and is
+  covered by six cases: valid, wrong secret, tampered body, stale timestamp,
+  missing header and multiple signatures.
+
 ## [0.5.0] — 2026-11-28
 
 Fifth Android release (`versionCode` 5).
