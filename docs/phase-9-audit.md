@@ -21,6 +21,11 @@ and changes no customer record.
 Every run is constrained to `dry_run = true` in the schema. There is no
 parameter, function or handler path for a live audit.
 
+An owner-started audit runs even while the company is paused. The queued job
+carries an `ownerStarted` marker written by `start_audit_run`, and the worker
+honours the pause exemption only for that marked job; every other non-system job
+stays deferred.
+
 Each check is recorded as:
 
 | Status | Meaning |
@@ -45,7 +50,7 @@ Each check is recorded as:
 | `spending_cap` | Recorded AI spend does not exceed the owner budget. |
 | `live_gates` | Email, payments, live Stripe mode and automatic production are all off. |
 | `provider_config` | Search, email and Stripe test credentials are present. Missing ones make this `blocked`. |
-| `live_key_guard` | A live Stripe key is refused. |
+| `live_key_guard` | A live Stripe key is refused. With no Stripe key the guard cannot be exercised, so it is `blocked`, never `pass`. |
 
 The checks are intentionally read-only. They do not requeue stale jobs, retry a
 send, create a checkout or repair data; those actions stay owner-driven.
@@ -56,6 +61,14 @@ The local suite runs every migration into a fresh Postgres database and seeds
 two separate owners. The controlled scenarios use only this throwaway database;
 no test business, contact, email, payment or deliverable exists in a live
 project because there is no live project.
+
+The first end-to-end run of the real worker and handler exposed two defects: the
+audit was deferred while the company was paused, and `live_key_guard` passed
+merely because no key existed. Both are fixed and covered by
+`phase9_audit_test.ts`. A rerun against a fresh database with
+`autonomy_mode = 'paused'` and no Stripe key produced: job **succeeded**; 10
+checks; **8 pass, 0 fail, 2 blocked** (`provider_config`, `live_key_guard`);
+overall **blocked**. No provider call was made.
 
 | Roadmap step | Evidence | Result |
 | --- | --- | --- |
@@ -120,8 +133,10 @@ available here.
 
 - Fresh local Postgres, all migrations: **132 assertions passed, 0 failed**
   (116 before Phase 9 + 16 Phase 9 checks).
-- `deno test supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts`:
-  **17 passed, 0 failed**.
+- `deno test supabase/tests/phase9_audit_test.ts supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts`:
+  **21 passed, 0 failed** (4 audit regressions, 11 policy, 6 webhook).
+- Real `runQueue` and `audit.run` end to end against a fresh local Postgres:
+  **11 harness checks passed, 0 failed**, with the company paused.
 - `deno run --allow-net=example.com supabase/tests/production_templates_test.ts`:
   every template passed and the live example.com audit returned HTTP 200.
 - `npx tsc --noEmit`: 0.
@@ -157,7 +172,7 @@ available here.
 node run.mjs
 
 # Pure policy and webhook tests
-deno test supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts
+deno test supabase/tests/phase9_audit_test.ts supabase/tests/phase9_policy_test.ts supabase/tests/stripe_signature_test.ts
 
 # Production generators
 deno run --allow-net=example.com supabase/tests/production_templates_test.ts

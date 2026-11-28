@@ -20,6 +20,14 @@ Sixth Android release (`versionCode` 6).
   covered by six cases: valid, wrong secret, tampered body, stale timestamp,
   missing header and multiple signatures.
 
+### Fixed
+
+- **Paused audit.** An owner-started `audit.run` now executes while the company
+  is paused. The job carries an `ownerStarted` marker written by
+  `start_audit_run`; every other non-system job stays deferred.
+- **Missing live key.** `live_key_guard` reports `blocked` when no Stripe key is
+  configured instead of passing a guard that was never exercised.
+
 ## [0.5.0] — 2026-11-28
 
 Fifth Android release (`versionCode` 5).

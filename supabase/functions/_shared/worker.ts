@@ -1,15 +1,17 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
-import { handlerFor, isSystemJob, type JobRow, type LogLevel } from './jobs.ts';
+import { handlerFor, type JobRow, type LogLevel } from './jobs.ts';
+import { runsWhilePaused } from './pause-policy.ts';
 import { SERVICE_VERSION } from './supabase.ts';
 
 /**
  * The queue loop.
  *
  * Claim with SKIP LOCKED, run the handler, checkpoint as it goes, complete or
- * fail with backoff. A paused company defers non-system work instead of burning
- * attempts on it. Nothing here invents activity: every row it writes is the
- * result of a handler that actually ran.
+ * fail with backoff. A paused company defers every job except system maintenance
+ * and an owner-started dry-run audit, instead of burning attempts on them.
+ * Nothing here invents activity: every row it writes is the result of a handler
+ * that actually ran.
  */
 
 export interface RunQueueOptions {
@@ -108,7 +110,7 @@ export async function runQueue({
 
       const paused = settings.data?.autonomy_mode === 'paused';
 
-      if (paused && !isSystemJob(job.kind)) {
+      if (paused && !runsWhilePaused(job.kind, job.payload)) {
         await admin.rpc('release_agent_job', {
           p_job_id: job.id,
           p_delay: '10 minutes',

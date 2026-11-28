@@ -1,3 +1,4 @@
+import { liveKeyGuardCheck, type AuditCheckStatus } from '../audit-checks.ts';
 import type { JobContext, JobHandler } from '../jobs.ts';
 import { emailProviderStatus } from '../providers/agentmail.ts';
 import { searchProviderStatus } from '../providers/search.ts';
@@ -48,8 +49,6 @@ interface DatabaseAudit {
   };
 }
 
-type CheckStatus = 'pass' | 'fail' | 'blocked';
-
 function list(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
@@ -90,7 +89,7 @@ export const auditRun: JobHandler = async (ctx: JobContext) => {
 
   const record = async (
     key: string,
-    status: CheckStatus,
+    status: AuditCheckStatus,
     detail: string,
     data: Record<string, unknown> = {},
   ): Promise<void> => {
@@ -284,21 +283,8 @@ export const auditRun: JobHandler = async (ctx: JobContext) => {
     },
   );
 
-  if (liveStripeKey) {
-    await record(
-      'live_key_guard',
-      'fail',
-      'A live Stripe key is present. Phase 9 must use a test key until the dry run passes.',
-      { liveStripeKey: true },
-    );
-  } else {
-    await record(
-      'live_key_guard',
-      'pass',
-      stripeKey ? 'The Stripe key is not a live key.' : 'No Stripe key is configured.',
-      { liveStripeKey: false },
-    );
-  }
+  const keyGuard = liveKeyGuardCheck(stripeKey);
+  await record('live_key_guard', keyGuard.status, keyGuard.detail, keyGuard.data);
 
   const finished = await ctx.admin.rpc('finish_audit_run', {
     p_run_id: runId,

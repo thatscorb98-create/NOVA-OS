@@ -43,13 +43,6 @@ export interface JobContext {
 
 export type JobHandler = (ctx: JobContext) => Promise<Record<string, unknown>>;
 
-const SYSTEM_PREFIX = 'system.';
-
-/** System jobs are allowed to run even while the company is paused. */
-export function isSystemJob(kind: string): boolean {
-  return kind.startsWith(SYSTEM_PREFIX);
-}
-
 const MEMORY_SCOPES = new Set(['company', 'agent', 'project', 'customer']);
 const MEMORY_KINDS = new Set(['fact', 'preference', 'decision', 'summary', 'note']);
 

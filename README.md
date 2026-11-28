@@ -324,9 +324,12 @@ checks: RLS and anon grants, `SECURITY DEFINER` search paths, payment and order
 integrity, delivery and production links, queue recovery, duplicate sends, the
 AI spending cap, every live gate and provider configuration.
 
-A missing provider is reported as **blocked**, never passed. One failing check
-makes the whole run **failed**; only a run with no fail or blocked check is
-**passed**. The audit reads only: it sends no email, creates no checkout and
+A missing provider is reported as **blocked**, never passed. That includes a
+missing Stripe key: `live_key_guard` is `blocked` when there is no key to
+classify, because the refusal was not exercised. An owner-started audit still
+runs while the company is paused; every other non-system job stays deferred.
+One failing check makes the whole run **failed**; only a run with no fail or
+blocked check is **passed**. The audit reads only: it sends no email, creates no checkout and
 produces no file. A second run cannot pile up while one is queued, and a dead
 worker job is closed on the next start. The Stripe webhook's HMAC logic is also
 covered by a six-case test: a valid signature passes; a wrong secret, tampered
