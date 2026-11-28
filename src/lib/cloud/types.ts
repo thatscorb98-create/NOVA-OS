@@ -250,10 +250,13 @@ export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
 
 export type PaymentIntentStatus =
   | 'requires_payment'
+  | 'checkout_created'
   | 'pending'
   | 'succeeded'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'refunded'
+  | 'partially_refunded';
 
 export interface CloudPaymentIntent {
   id: string;
@@ -262,15 +265,77 @@ export interface CloudPaymentIntent {
   currency: string;
   provider: 'none' | 'stripe';
   status: PaymentIntentStatus;
+  checkout_url: string | null;
+  checkout_session_id: string | null;
+  paid_at: string | null;
+  refunded_cents: number;
   created_at: string;
 }
 
 export const PAYMENT_STATUS_LABEL: Record<PaymentIntentStatus, string> = {
-  requires_payment: 'OWED',
+  requires_payment: 'AWAITING CHECKOUT',
+  checkout_created: 'CHECKOUT OPEN',
   pending: 'PENDING',
   succeeded: 'PAID',
   failed: 'FAILED',
   cancelled: 'CANCELLED',
+  refunded: 'REFUNDED',
+  partially_refunded: 'PART REFUNDED',
+};
+
+/** A paid order exists only after Stripe's signed webhook confirmed the money. */
+export interface CloudOrder {
+  id: string;
+  quote_id: string;
+  payment_intent_id: string;
+  lead_id: string | null;
+  amount_cents: number;
+  currency: string;
+  status: 'paid' | 'fulfilled' | 'refunded' | 'partially_refunded';
+  paid_at: string;
+  created_at: string;
+}
+
+export const ORDER_STATUS_LABEL: Record<CloudOrder['status'], string> = {
+  paid: 'PAID',
+  fulfilled: 'FULFILLED',
+  refunded: 'REFUNDED',
+  partially_refunded: 'PART REFUNDED',
+};
+
+export interface CloudFinanceSummary {
+  grossRevenueCents: number;
+  netRevenueCents: number;
+  refundedCents: number;
+  pendingCents: number;
+  expensesCents: number;
+  aiSpendCents: number;
+  profitCents: number;
+  pendingCount: number;
+  paidCount: number;
+  failedCount: number;
+  orderCount: number;
+  paymentsLive: boolean;
+  stripeLiveMode: boolean;
+}
+
+export type ExpenseCategory = 'software' | 'ads' | 'contractor' | 'tools' | 'other';
+
+export interface CloudExpense {
+  id: string;
+  category: ExpenseCategory;
+  note: string;
+  amount_cents: number;
+  incurred_on: string;
+  created_at: string;
+}
+
+export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
+  software: 'SOFTWARE',
+  ads: 'ADS',
+  contractor: 'CONTRACTOR',
+  tools: 'TOOLS',
+  other: 'OTHER',
 };
 
 /* -------------------------------------------------------------- Phase 5 */

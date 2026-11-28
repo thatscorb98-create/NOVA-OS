@@ -13,6 +13,7 @@ import { Screen } from '@/components/ui/Screen';
 import {
   PAYMENT_STATUS_LABEL,
   QUOTE_STATUS_LABEL,
+  type CloudPaymentIntent,
   type CloudQuote,
   type QuoteStatus,
 } from '@/lib/cloud/types';
@@ -66,6 +67,12 @@ function relativeFromIso(iso: string | null): string {
   return Number.isFinite(parsed) ? formatRelative(parsed) : 'unknown';
 }
 
+function isPaid(intent: CloudPaymentIntent | null): boolean {
+  return Boolean(
+    intent && ['succeeded', 'refunded', 'partially_refunded'].includes(intent.status),
+  );
+}
+
 function QuoteRow({
   quote,
   businessName,
@@ -74,7 +81,9 @@ function QuoteRow({
   onSend,
   onLink,
   onRecordOwed,
-  hasIntent,
+  onCheckout,
+  intent,
+  paymentsLive,
 }: {
   quote: CloudQuote;
   businessName: string | null;
@@ -83,7 +92,9 @@ function QuoteRow({
   onSend: () => void;
   onLink: () => void;
   onRecordOwed: () => void;
-  hasIntent: boolean;
+  onCheckout: () => void;
+  intent: CloudPaymentIntent | null;
+  paymentsLive: boolean;
 }) {
   return (
     <View
@@ -123,6 +134,34 @@ function QuoteRow({
         <AppText variant="caption" numberOfLines={3}>
           {quote.scope}
         </AppText>
+      ) : null}
+
+      {intent?.checkout_url && !isPaid(intent) ? (
+        <View
+          style={{
+            borderRadius: radius.md,
+            borderWidth: 1,
+            borderColor: `${colors.success}44`,
+            backgroundColor: 'rgba(74, 222, 128, 0.06)',
+            padding: spacing.md,
+            gap: spacing.sm,
+          }}
+        >
+          <AppText variant="micro" style={{ color: colors.success, letterSpacing: 0.6 }}>
+            STRIPE CHECKOUT
+          </AppText>
+          <AppText variant="caption" selectable style={{ lineHeight: 18 }}>
+            {intent.checkout_url}
+          </AppText>
+          <Pressable
+            onPress={() => void Share.share({ message: intent.checkout_url as string })}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            <AppText variant="micro" style={{ color: colors.violetBright }}>
+              SHARE PAYMENT LINK
+            </AppText>
+          </Pressable>
+        </View>
       ) : null}
 
       {link ? (
@@ -191,7 +230,27 @@ function QuoteRow({
           </Pressable>
         ) : null}
 
-        {quote.status === 'accepted' && !hasIntent ? (
+        {quote.status === 'accepted' && paymentsLive && !isPaid(intent) ? (
+          <Pressable
+            onPress={onCheckout}
+            disabled={busy}
+            style={({ pressed }) => ({
+              opacity: busy ? 0.5 : pressed ? 0.7 : 1,
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.sm,
+              borderRadius: radius.md,
+              borderWidth: 1,
+              borderColor: `${colors.success}55`,
+              backgroundColor: 'rgba(74, 222, 128, 0.08)',
+            })}
+          >
+            <AppText variant="micro" style={{ color: colors.success }}>
+              {intent?.checkout_url ? 'REFRESH CHECKOUT' : 'CREATE CHECKOUT'}
+            </AppText>
+          </Pressable>
+        ) : null}
+
+        {quote.status === 'accepted' && !paymentsLive && !intent ? (
           <Pressable
             onPress={onRecordOwed}
             disabled={busy}
@@ -211,9 +270,17 @@ function QuoteRow({
           </Pressable>
         ) : null}
 
-        {quote.status === 'accepted' && hasIntent ? (
-          <AppText variant="micro" style={{ color: colors.success, letterSpacing: 0.4 }}>
-            PAYMENT RECORD ON FILE
+        {intent ? (
+          <AppText
+            variant="micro"
+            style={{
+              color: isPaid(intent) ? colors.success : colors.amber,
+              letterSpacing: 0.4,
+            }}
+          >
+            {`${PAYMENT_STATUS_LABEL[intent.status]}${
+              isPaid(intent) && intent.paid_at ? ` ${relativeFromIso(intent.paid_at)}` : ''
+            }`}
           </AppText>
         ) : null}
       </View>
@@ -311,6 +378,12 @@ export default function QuotesScreen() {
     setBusyId(null);
   };
 
+  const startCheckout = async (id: string) => {
+    setBusyId(id);
+    await cloud.createCheckout(id);
+    setBusyId(null);
+  };
+
   if (!cloud.session) {
     return (
       <Screen eyebrow="Nova OS" title="Quotes" subtitle="Amounts, acceptance and what is owed.">
@@ -339,8 +412,8 @@ export default function QuotesScreen() {
           </View>
           <AppText variant="caption" style={{ marginTop: spacing.sm }}>
             {paymentsLive
-              ? 'An accepted quote can record the amount owed. No payment provider is connected, so nothing is charged and no card details are collected.'
-              : 'Payment records stay blocked until you switch payments on. Even then, nothing charges: no provider is connected.'}
+              ? 'Checkout exists only for a quote the customer accepted. Stripe holds the card details; this app never sees them. A payment counts only after Stripe confirms it by signed webhook.'
+              : 'Checkout stays blocked until you switch payments on. Test mode is the default; live mode is a second switch, and nothing charges without it.'}
           </AppText>
           <View style={{ marginTop: spacing.md }}>
             <NeonButton
@@ -461,11 +534,13 @@ export default function QuotesScreen() {
                 quote={quote}
                 businessName={businessName(quote.lead_id)}
                 link={links[quote.id] ?? null}
-                busy={busyId === quote.id || cloud.busy === 'quote'}
+                busy={busyId === quote.id || cloud.busy === 'quote' || cloud.busy === 'payment'}
                 onSend={() => void send(quote.id)}
                 onLink={() => void makeLink(quote.id)}
                 onRecordOwed={() => void recordOwed(quote.id)}
-                hasIntent={intentFor(quote.id) !== null}
+                onCheckout={() => void startCheckout(quote.id)}
+                intent={intentFor(quote.id)}
+                paymentsLive={paymentsLive}
               />
             ))
           )}
@@ -488,11 +563,13 @@ export default function QuotesScreen() {
                 quote={quote}
                 businessName={businessName(quote.lead_id)}
                 link={links[quote.id] ?? null}
-                busy={busyId === quote.id || cloud.busy === 'quote'}
+                busy={busyId === quote.id || cloud.busy === 'quote' || cloud.busy === 'payment'}
                 onSend={() => {}}
                 onLink={() => void makeLink(quote.id)}
                 onRecordOwed={() => void recordOwed(quote.id)}
-                hasIntent={intentFor(quote.id) !== null}
+                onCheckout={() => void startCheckout(quote.id)}
+                intent={intentFor(quote.id)}
+                paymentsLive={paymentsLive}
               />
             ))
           )}
@@ -597,13 +674,21 @@ export default function QuotesScreen() {
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
+        <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
           <View style={{ flex: 1 }}>
             <NeonButton
               label="Delivery"
               icon="cube-outline"
               variant="ghost"
               onPress={() => router.push('/delivery')}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <NeonButton
+              label="Finance"
+              icon="cash-outline"
+              variant="ghost"
+              onPress={() => router.push('/finance')}
             />
           </View>
         </View>

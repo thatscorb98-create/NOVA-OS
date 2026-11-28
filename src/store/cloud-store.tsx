@@ -20,9 +20,12 @@ import type {
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
+  CloudExpense,
+  CloudFinanceSummary,
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudOrder,
   CloudOutreachMessage,
   CloudPaymentIntent,
   CloudQuote,
@@ -62,6 +65,8 @@ type BusyKey =
   | 'quote'
   | 'deal'
   | 'delivery'
+  | 'payment'
+  | 'finance'
   | null;
 
 interface CloudContextValue {
@@ -84,6 +89,9 @@ interface CloudContextValue {
   deliverables: CloudDeliverable[];
   quotes: CloudQuote[];
   paymentIntents: CloudPaymentIntent[];
+  orders: CloudOrder[];
+  finance: CloudFinanceSummary | null;
+  expenses: CloudExpense[];
   deals: CloudDeal[];
   replies: CloudReply[];
   lastError: string | null;
@@ -112,6 +120,7 @@ interface CloudContextValue {
     daily_lead_cap?: number;
     score_threshold?: number;
     payments_live?: boolean;
+    stripe_live_mode?: boolean;
   }) => Promise<CloudResult>;
   approveMessage: (id: string) => Promise<CloudResult>;
   draftForLead: (leadId: string) => Promise<CloudResult>;
@@ -126,6 +135,13 @@ interface CloudContextValue {
   sendQuote: (id: string) => Promise<CloudResult>;
   quoteLink: (id: string) => Promise<CloudResult>;
   recordPaymentDue: (quoteId: string) => Promise<CloudResult>;
+  createCheckout: (quoteId: string) => Promise<CloudResult>;
+  addExpense: (input: {
+    category: CloudExpense['category'];
+    note: string;
+    amountCents: number;
+  }) => Promise<CloudResult>;
+  removeExpense: (id: string) => Promise<CloudResult>;
   setDealStage: (id: string, stage: DealStage) => Promise<CloudResult>;
   openDelivery: (quoteId: string) => Promise<CloudResult>;
   startDeliverable: (id: string) => Promise<CloudResult>;
@@ -158,6 +174,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
   const [deliverables, setDeliverables] = useState<CloudDeliverable[]>([]);
   const [quotes, setQuotes] = useState<CloudQuote[]>([]);
   const [paymentIntents, setPaymentIntents] = useState<CloudPaymentIntent[]>([]);
+  const [orders, setOrders] = useState<CloudOrder[]>([]);
+  const [finance, setFinance] = useState<CloudFinanceSummary | null>(null);
+  const [expenses, setExpenses] = useState<CloudExpense[]>([]);
   const [deals, setDeals] = useState<CloudDeal[]>([]);
   const [replies, setReplies] = useState<CloudReply[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -207,6 +226,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeliverables([]);
       setQuotes([]);
       setPaymentIntents([]);
+      setOrders([]);
+      setFinance(null);
+      setExpenses([]);
       setDeals([]);
       setReplies([]);
       return;
@@ -228,6 +250,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         nextDeliverables,
         nextQuotes,
         nextIntents,
+        nextOrders,
+        nextFinance,
+        nextExpenses,
         nextDeals,
         nextReplies,
       ] = await Promise.all([
@@ -244,6 +269,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         cloudApi.loadDeliverables(client),
         cloudApi.loadQuotes(client),
         cloudApi.loadPaymentIntents(client),
+        cloudApi.loadOrders(client),
+        cloudApi.loadFinanceSummary(client),
+        cloudApi.loadExpenses(client),
         cloudApi.loadDeals(client),
         cloudApi.loadReplies(client),
       ]);
@@ -262,6 +290,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeliverables(nextDeliverables);
       setQuotes(nextQuotes);
       setPaymentIntents(nextIntents);
+      setOrders(nextOrders);
+      setFinance(nextFinance);
+      setExpenses(nextExpenses);
       setDeals(nextDeals);
       setReplies(nextReplies);
       setLastError(null);
@@ -286,6 +317,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       setDeliverables([]);
       setQuotes([]);
       setPaymentIntents([]);
+      setOrders([]);
+      setFinance(null);
+      setExpenses([]);
       setDeals([]);
       setReplies([]);
       return;
@@ -572,6 +606,7 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       daily_lead_cap?: number;
       score_threshold?: number;
       payments_live?: boolean;
+      stripe_live_mode?: boolean;
     }): Promise<CloudResult> => {
       const client = getSupabase();
       if (!client) return { ok: false, error: 'No cloud project is configured.' };
@@ -584,11 +619,15 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         await cloudApi.updateCompanySettings(client, patch);
         await refresh();
         setLastMessage(
-          patch.payments_live === undefined
-            ? 'Discovery settings saved.'
-            : patch.payments_live
-              ? 'Payments are live for recording amounts owed. No provider is connected, so nothing is charged.'
-              : 'Payments are switched off.',
+          patch.stripe_live_mode !== undefined
+            ? patch.stripe_live_mode
+              ? 'Live mode is on. Every checkout now uses the configured live key; a real card can be charged.'
+              : 'Live mode is off. Checkout stays in Stripe test mode.'
+            : patch.payments_live === undefined
+              ? 'Discovery settings saved.'
+              : patch.payments_live
+                ? 'Payments are switched on. Checkout still requires an accepted quote, and Stripe must confirm the payment before an order exists.'
+                : 'Payments are switched off.',
         );
         return { ok: true };
       } catch (error) {
@@ -753,6 +792,89 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
         setLastMessage(detail);
         await refresh();
         return { ok: true, detail };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const createCheckout = useCallback(
+    async (quoteId: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('payment');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        const checkout = await cloudApi.createCheckout(client, quoteId);
+        await refresh();
+        setLastMessage(
+          checkout.mode === 'live'
+            ? 'Live checkout created. Stripe must confirm the payment by signed webhook before an order exists.'
+            : 'Test-mode checkout created. No real money can move; Stripe must confirm it by signed webhook.',
+        );
+        return { ok: true, detail: checkout.url };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const addExpense = useCallback(
+    async (input: {
+      category: CloudExpense['category'];
+      note: string;
+      amountCents: number;
+    }): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('finance');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.addExpense(client, input);
+        await refresh();
+        setLastMessage('Expense recorded.');
+        return { ok: true };
+      } catch (error) {
+        const message = cloudApi.describeCloudError(error);
+        setLastError(message);
+        return { ok: false, error: message };
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const removeExpense = useCallback(
+    async (id: string): Promise<CloudResult> => {
+      const client = getSupabase();
+      if (!client) return { ok: false, error: 'No cloud project is configured.' };
+
+      setBusy('finance');
+      setLastError(null);
+      setLastMessage(null);
+
+      try {
+        await cloudApi.deleteExpense(client, id);
+        await refresh();
+        setLastMessage('Expense removed.');
+        return { ok: true };
       } catch (error) {
         const message = cloudApi.describeCloudError(error);
         setLastError(message);
@@ -966,6 +1088,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       deliverables,
       quotes,
       paymentIntents,
+      orders,
+      finance,
+      expenses,
       deals,
       replies,
       lastError,
@@ -991,6 +1116,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       sendQuote,
       quoteLink,
       recordPaymentDue,
+      createCheckout,
+      addExpense,
+      removeExpense,
       setDealStage,
       openDelivery,
       startDeliverable,
@@ -1018,6 +1146,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       deliverables,
       quotes,
       paymentIntents,
+      orders,
+      finance,
+      expenses,
       deals,
       replies,
       lastError,
@@ -1043,6 +1174,9 @@ export function CloudProvider({ children }: { children: React.ReactNode }) {
       sendQuote,
       quoteLink,
       recordPaymentDue,
+      createCheckout,
+      addExpense,
+      removeExpense,
       setDealStage,
       openDelivery,
       startDeliverable,

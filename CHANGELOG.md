@@ -2,6 +2,27 @@
 
 All notable changes to NOVA OS. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow semantic versioning. Every Android build carries the `versionCode` from `app.json`.
 
+## [0.2.0] — 2026-11-28
+
+Second Android release (`versionCode` 2).
+
+### Added
+
+- **Stripe checkout (Phase 5).** An accepted quote with payments switched on can
+  open a Stripe Checkout Session from the app. The session is created server-side;
+  the secret key never reaches the bundle.
+- **Verified payments.** A paid record exists only after `stripe-webhook` verifies
+  the HMAC signature and `record_stripe_event` matches the amount and currency.
+  Duplicate events are idempotent, and an order is created exactly once.
+- **Refunds.** `charge.refunded` updates the payment and the order to partial or
+  full refund without inventing a second payment.
+- **Finance screen.** Gross and net revenue, pending money, refunds, recorded
+  expenses, AI spend, profit, payment records and paid orders.
+- **Expenses.** The owner records real costs; profit is revenue minus those costs
+  and the recorded AI spend.
+- **Live-mode switch.** Off by default; a live Stripe key is refused while it is
+  off.
+
 ## [0.1.0] — 2026-11-25
 
 First installable Android release (`versionCode` 1).

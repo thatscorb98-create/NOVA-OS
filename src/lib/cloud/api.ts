@@ -9,9 +9,12 @@ import type {
   CloudDiscoveryRun,
   CloudEmailAccount,
   CloudEvent,
+  CloudExpense,
+  CloudFinanceSummary,
   CloudHealth,
   CloudJob,
   CloudLead,
+  CloudOrder,
   CloudOutreachMessage,
   CloudPaymentIntent,
   CloudQuote,
@@ -268,6 +271,7 @@ export async function updateCompanySettings(
     email_enabled: boolean;
     production_enabled: boolean;
     payments_live: boolean;
+    stripe_live_mode: boolean;
     daily_lead_cap: number;
     score_threshold: number;
     industries: string[];
@@ -495,12 +499,124 @@ export async function loadPaymentIntents(
 ): Promise<CloudPaymentIntent[]> {
   const { data, error } = await client
     .from('payment_intents')
-    .select('id, quote_id, amount_cents, currency, provider, status, created_at')
+    .select(
+      'id, quote_id, amount_cents, currency, provider, status, checkout_url, checkout_session_id, paid_at, refunded_cents, created_at',
+    )
     .order('created_at', { ascending: false })
     .limit(limit);
 
   if (error) throw new Error(describeCloudError(error));
   return (data ?? []) as CloudPaymentIntent[];
+}
+
+/**
+ * Open a Stripe Checkout Session for an accepted quote.
+ *
+ * Only the quote id leaves the phone. The Stripe secret key stays in the edge
+ * function, and the function refuses anything the database has not accepted.
+ */
+export async function createCheckout(
+  client: SupabaseClient,
+  quoteId: string,
+): Promise<{ url: string; mode: 'test' | 'live'; reused: boolean }> {
+  const { data, error } = await client.functions.invoke('payments', {
+    body: { quoteId },
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+
+  const payload = data as
+    | { ok?: boolean; url?: string; mode?: string; reused?: boolean; error?: string }
+    | null;
+
+  if (!payload?.ok || !payload.url) {
+    throw new Error(payload?.error ?? 'Stripe did not return a checkout link.');
+  }
+
+  return {
+    url: payload.url,
+    mode: payload.mode === 'live' ? 'live' : 'test',
+    reused: payload.reused === true,
+  };
+}
+
+/** Paid orders. An order exists only for a payment Stripe confirmed. */
+export async function loadOrders(client: SupabaseClient, limit = 40): Promise<CloudOrder[]> {
+  const { data, error } = await client
+    .from('orders')
+    .select(
+      'id, quote_id, payment_intent_id, lead_id, amount_cents, currency, status, paid_at, created_at',
+    )
+    .order('paid_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudOrder[];
+}
+
+/** Revenue, refunds, pending money, costs and profit, computed by the database. */
+export async function loadFinanceSummary(
+  client: SupabaseClient,
+): Promise<CloudFinanceSummary | null> {
+  const { data, error } = await client.rpc('finance_summary');
+  if (error) throw new Error(describeCloudError(error));
+  if (!data) return null;
+
+  const raw = data as Record<string, unknown>;
+  const number = (key: string): number => {
+    const value = Number(raw[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  return {
+    grossRevenueCents: number('grossRevenueCents'),
+    netRevenueCents: number('netRevenueCents'),
+    refundedCents: number('refundedCents'),
+    pendingCents: number('pendingCents'),
+    expensesCents: number('expensesCents'),
+    aiSpendCents: number('aiSpendCents'),
+    profitCents: number('profitCents'),
+    pendingCount: number('pendingCount'),
+    paidCount: number('paidCount'),
+    failedCount: number('failedCount'),
+    orderCount: number('orderCount'),
+    paymentsLive: raw.paymentsLive === true,
+    stripeLiveMode: raw.stripeLiveMode === true,
+  };
+}
+
+export async function loadExpenses(client: SupabaseClient, limit = 40): Promise<CloudExpense[]> {
+  const { data, error } = await client
+    .from('expenses')
+    .select('id, category, note, amount_cents, incurred_on, created_at')
+    .order('incurred_on', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(describeCloudError(error));
+  return (data ?? []) as CloudExpense[];
+}
+
+/** The owner records a real cost; nothing here estimates one. */
+export async function addExpense(
+  client: SupabaseClient,
+  input: { category: CloudExpense['category']; note: string; amountCents: number },
+): Promise<void> {
+  const ownerId = await currentOwnerId(client);
+
+  const { error } = await client.from('expenses').insert({
+    owner_id: ownerId,
+    category: input.category,
+    note: input.note.trim().slice(0, 200),
+    amount_cents: Math.max(1, Math.round(input.amountCents)),
+  });
+
+  if (error) throw new Error(describeCloudError(error));
+}
+
+export async function deleteExpense(client: SupabaseClient, id: string): Promise<void> {
+  const ownerId = await currentOwnerId(client);
+  const { error } = await client.from('expenses').delete().eq('id', id).eq('owner_id', ownerId);
+  if (error) throw new Error(describeCloudError(error));
 }
 
 /** Queue the internal "amount owed" record for an accepted quote. Nothing charges. */

@@ -50,9 +50,10 @@ that reference for `succeeded`.
 
 ## What is not built
 
-- No payment provider integration. `provider` is `none`; there is no Stripe client
-  and no charge call anywhere in the codebase. With `STRIPE_SECRET_KEY` unset the
-  intent handler records what is owed and says nothing can be collected.
+- No payment provider integration in this phase. `provider` starts as `none` and
+  an intent only records what is owed. Stripe checkout is
+  [`phase-5-stripe.md`](phase-5-stripe.md); the app itself still makes no charge
+  call and never collects card details.
 - No invoice PDF, no receipts, no refunds. Delivery is tracked separately in
   [`phase-6-production.md`](phase-6-production.md).
 - The acceptance page was exercised by the SQL function and inspected as code;

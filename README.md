@@ -7,7 +7,7 @@ NOVA is the central intelligence. Around it sit six specialists: **ATLAS** (rese
 > **Current status: Phase Four — mission execution.**
 > Give NOVA a goal and it plans the work, delegates each task to a specialist, reviews what comes back, retries failures and writes a final report. Runs are gated by approvals and hard budgets, and memory from previous missions is recalled into every prompt. Nothing is scripted: with no API key the app says the core is offline instead of inventing an answer.
 >
-> **Cloud foundation:** discovery, outreach, quotes, payment records, the reply pipeline and delivery tracking are built and checked against a local Postgres. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered.
+> **Cloud foundation:** discovery, outreach, quotes, Stripe checkout and verified payments, the reply pipeline and delivery tracking are built and checked against a local Postgres. No Supabase project is configured for this repository, so no edge function has run against a live backend, and nothing has been emailed, charged or delivered. No Stripe key is configured, so no Checkout Session has ever been created by this build.
 
 ---
 
@@ -109,7 +109,7 @@ The call budget is persisted on the mission and incremented before every request
 - Parallel task execution: planned tasks run one at a time to keep costs and rate limits predictable.
 - Automatic replanning when a whole plan fails; you retry or start a new mission instead.
 - Multi-device memory sync. Phase 1 adds optional owner accounts and a cloud queue, but the local ledger is not mirrored automatically.
-- Live email and payments. Both have their backend and screens, but they ship switched off, no provider key is configured, and nothing has been sent or charged. Payment records say what is owed; there is no charge call in the codebase.
+- Live email and live payments. Both have their backend and screens, but they ship switched off and no provider key is configured in this environment, so nothing has been sent or charged. Stripe test-mode checkout is implemented; with no Stripe key, no Checkout Session has been created by this build and no webhook has been received.
 - Automatic production. Delivery tracking records the work and the link to it, but no tool generates the deliverable and nothing is sent to a customer automatically.
 - Inbox sync. Replies are only recorded when the email provider POSTs to the webhook; the app does not poll a mailbox.
 - Memory export/import.
@@ -236,6 +236,7 @@ Later cloud phases, each with its own evidence and limits:
 
 - [`docs/phase-2-and-3.md`](docs/phase-2-and-3.md) — discovery, scoring, outreach drafts and the send gates.
 - [`docs/phase-4-quotes.md`](docs/phase-4-quotes.md) — quotes, signed acceptance links and payment records.
+- [`docs/phase-5-stripe.md`](docs/phase-5-stripe.md) — Stripe checkout, signed webhooks, verified payments, orders and the finance summary.
 - [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
 - [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
 
@@ -249,6 +250,27 @@ unexpired quote. Only after that can `create_payment_intent` record an amount
 owed — and only when payments are switched live. A record starts as
 `requires_payment`; `succeeded` is refused without a provider reference. There
 is no charge call in the codebase.
+
+### Stripe checkout and verified payments (Phase 5)
+
+An accepted quote is the only thing that can start a checkout, and the owner's
+payments switch has to be on. `payments` creates a Stripe Checkout Session from
+the quote's own amount and title, and stores only the session id and its `https`
+URL. The app never receives `STRIPE_SECRET_KEY`.
+
+A payment is recorded as paid only by `stripe-webhook`, and only after the
+request passes an HMAC-SHA256 check against `STRIPE_WEBHOOK_SECRET` with a
+five-minute tolerance. `record_stripe_event` deduplicates by Stripe event id,
+matches our own payment record, verifies the amount and currency, and creates
+the order exactly once. A mismatch, a forged signature or a refund for an unpaid
+record is recorded as evidence and changes nothing. `charge.refunded` updates the
+payment and the order instead of inventing a new one.
+
+Live mode is a second switch (`stripe_live_mode`, off by default). A live key
+with live mode off is refused, as is a key that is not a Stripe secret key.
+**Finance** shows gross and net revenue, pending money, refunds, recorded
+expenses, AI spend and profit from stored rows only. Delivery cannot start for a
+quote whose recorded payment was refunded.
 
 ### Replies, suppression and the pipeline (Phase 5)
 

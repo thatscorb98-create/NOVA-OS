@@ -24,3 +24,13 @@ verify_jwt = false
 # code, and the acceptance itself is a service-role database function.
 [functions.quote]
 verify_jwt = false
+
+# Checkout: the signed-in owner is checked in code, and the customer's return
+# page has no session at all.
+[functions.payments]
+verify_jwt = false
+
+# Stripe calls this endpoint with a signature, not a Supabase session. Every
+# request is checked against STRIPE_WEBHOOK_SECRET before anything is trusted.
+[functions.stripe-webhook]
+verify_jwt = false
