@@ -240,6 +240,8 @@ Later cloud phases, each with its own evidence and limits:
 - [`docs/phase-5-pipeline.md`](docs/phase-5-pipeline.md) — reply capture, suppression, the deal pipeline and the ready-to-draft query.
 - [`docs/phase-6-production.md`](docs/phase-6-production.md) — delivery tracking, evidence, acceptance and bounded revisions.
 
+The uploaded build plan is archived at [`docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md`](docs/NOVA_OS_Freebuff_Autonomous_Build_Roadmap.md). [`AGENTS.md`](AGENTS.md) records which roadmap phase is complete and the rules every phase follows.
+
 ### Quotes, acceptance and payment records (Phase 4)
 
 The owner writes a quote and the amount; NOVA never guesses a price. `send_quote`
