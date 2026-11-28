@@ -1,4 +1,4 @@
-import { liveKeyGuardCheck, type AuditCheckStatus } from '../audit-checks.ts';
+import { isLiveStripeKey, liveKeyGuardCheck, type AuditCheckStatus } from '../audit-checks.ts';
 import type { JobContext, JobHandler } from '../jobs.ts';
 import { emailProviderStatus } from '../providers/agentmail.ts';
 import { searchProviderStatus } from '../providers/search.ts';
@@ -259,7 +259,7 @@ export const auditRun: JobHandler = async (ctx: JobContext) => {
   const email = emailProviderStatus();
   const stripeKey = env('STRIPE_SECRET_KEY');
   const stripeWebhook = env('STRIPE_WEBHOOK_SECRET');
-  const liveStripeKey = Boolean(stripeKey?.startsWith('sk_live_'));
+  const liveStripeKey = isLiveStripeKey(stripeKey);
   const missing = [
     search.configured ? null : 'search',
     email.configured ? null : 'email',

@@ -63,7 +63,7 @@ Deno.test('live_key_guard is blocked when no Stripe key is configured', () => {
   assert(result.data.liveStripeKey === false, 'the blocked result claims a live key is present');
 });
 
-Deno.test('live_key_guard still refuses a live key and passes a test key', () => {
+Deno.test('live_key_guard refuses a standard live key and passes a test key', () => {
   const live = liveKeyGuardCheck('sk_live_example');
   assert(live.status === 'fail', `a live key was reported as ${live.status}`);
   assert(live.data.liveStripeKey === true, 'a live key was not recorded as live');
@@ -71,4 +71,30 @@ Deno.test('live_key_guard still refuses a live key and passes a test key', () =>
   const test = liveKeyGuardCheck('sk_test_example');
   assert(test.status === 'pass', `a test key was reported as ${test.status}`);
   assert(test.data.liveStripeKey === false, 'a test key was recorded as live');
+});
+
+Deno.test('live_key_guard refuses a restricted live key', () => {
+  const restricted = liveKeyGuardCheck('rk_live_example');
+
+  assert(
+    restricted.status === 'fail',
+    `a restricted live key was reported as ${restricted.status}`,
+  );
+  assert(
+    restricted.data.liveStripeKey === true,
+    'a restricted live key was not recorded as live',
+  );
+});
+
+Deno.test('live_key_guard passes a restricted test key', () => {
+  const restrictedTest = liveKeyGuardCheck('rk_test_example');
+
+  assert(
+    restrictedTest.status === 'pass',
+    `a restricted test key was reported as ${restrictedTest.status}`,
+  );
+  assert(
+    restrictedTest.data.liveStripeKey === false,
+    'a restricted test key was recorded as live',
+  );
 });
